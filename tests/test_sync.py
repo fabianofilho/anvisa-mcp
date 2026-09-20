@@ -228,3 +228,15 @@ def test_gravar_deduplica_chave_repetida(db: duckdb.DuckDBPyConnection) -> None:
     resultado = _gravar(db, "medicamentos", [base, {**base, "nome_produto": "APRESENTACAO B"}])
     assert resultado.total == 1
     assert db.execute("SELECT nome_produto FROM medicamentos").fetchone()[0] == "APRESENTACAO B"
+
+
+def test_hora_local_e_validada() -> None:
+    """A estratégia depende de horário fixo: formato inválido tem que falhar cedo."""
+    from pydantic import ValidationError
+
+    from anvisa_mcp.config import Config
+
+    assert Config(sync_hora_local="03:20").sync_hora_local == "03:20"
+    for invalido in ("25:00", "3:20", "03:60", "manha"):
+        with pytest.raises(ValidationError):
+            Config(sync_hora_local=invalido)

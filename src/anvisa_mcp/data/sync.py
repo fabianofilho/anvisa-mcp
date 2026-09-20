@@ -152,8 +152,13 @@ async def sync_dispositivos_medicos(
     return await _sync_fonte(conexao, DISPOSITIVOS_MEDICOS, client=client)
 
 
-def agendar_syncs(caminho_db: str, frequencia_horas: int) -> Any:
-    """Agenda os dois syncs no APScheduler e devolve o scheduler já iniciado."""
+def agendar_syncs(caminho_db: str, hora_local: str) -> Any:
+    """Agenda os dois syncs num horário fixo e devolve o scheduler já iniciado.
+
+    ``hora_local`` é ``HH:MM``. É horário fixo, e não intervalo relativo, porque a
+    GPU serializa as chamadas ao LLM: os syncs dos projetos locais são escalonados
+    de madrugada para não competirem entre si nem com uso interativo.
+    """
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
     from anvisa_mcp.store.db import conectar
@@ -166,8 +171,9 @@ def agendar_syncs(caminho_db: str, frequencia_horas: int) -> Any:
                 except Exception:  # noqa: BLE001 - o agendador não pode morrer por uma fonte
                     logger.exception("sync falhou")
 
+    hora, minuto = (int(parte) for parte in hora_local.split(":"))
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(tarefa, "interval", hours=frequencia_horas, next_run_time=None)
+    scheduler.add_job(tarefa, "cron", hour=hora, minute=minuto)
     scheduler.start()
-    logger.info("syncs agendados a cada %dh", frequencia_horas)
+    logger.info("syncs agendados diariamente às %s", hora_local)
     return scheduler
