@@ -188,6 +188,7 @@ async def test_usa_cache_em_vez_de_reclassificar(caminho_db: str) -> None:
     resposta = await buscar_samd_recentes(
         dias=90,
         apenas_com_ia=False,
+        apenas_software=False,
         caminho_db=caminho_db,
         qwen_endpoint=ENDPOINT,
         qwen_model=MODELO,
@@ -223,6 +224,7 @@ async def test_apenas_com_ia_filtra(caminho_db: str) -> None:
     resposta = await buscar_samd_recentes(
         dias=90,
         apenas_com_ia=True,
+        apenas_software=False,
         caminho_db=caminho_db,
         qwen_endpoint=ENDPOINT,
         qwen_model=MODELO,
@@ -261,3 +263,101 @@ def test_ordem_estavel_com_datas_empatadas(db: duckdb.DuckDBPyConnection) -> Non
     primeira = [d["numero_registro"] for d in dispositivos_no_periodo(db, dias=90, limite=2)]
     segunda = [d["numero_registro"] for d in dispositivos_no_periodo(db, dias=90, limite=2)]
     assert primeira == segunda == ["100", "200"]
+
+
+# --- pré-filtro de software ------------------------------------------------
+
+
+def test_filtro_software_descarta_hardware(db: duckdb.DuckDBPyConnection) -> None:
+    """SaMD é raro: sem filtro, o LLM é gasto em cânulas e parafusos."""
+    _inserir_dispositivo(
+        db, numero="1", nome="PARAFUSO PEDICULAR", descricao="Nome técnico: parafuso ósseo"
+    )
+    _inserir_dispositivo(
+        db, numero="2", nome="CAD4TB", descricao="Software para detecção de tuberculose"
+    )
+
+    com_filtro = dispositivos_no_periodo(db, dias=90, apenas_software=True)
+    sem_filtro = dispositivos_no_periodo(db, dias=90, apenas_software=False)
+
+    assert [d["nome_produto"] for d in com_filtro] == ["CAD4TB"]
+    assert len(sem_filtro) == 2
+
+
+def test_filtro_software_olha_tambem_o_nome(db: duckdb.DuckDBPyConnection) -> None:
+    """O nome comercial às vezes é o único lugar onde 'software' aparece."""
+    _inserir_dispositivo(db, numero="1", nome="Software de contorno em radioterapia", descricao="")
+    assert len(dispositivos_no_periodo(db, dias=90, apenas_software=True)) == 1
+
+
+def test_filtro_software_nao_pega_sistema_de_joelho(db: duckdb.DuckDBPyConnection) -> None:
+    """'Sistema de' pegaria hardware ortopédico: por isso não está na lista."""
+    _inserir_dispositivo(
+        db, numero="1", nome="Sistema de Joelho MOBIO PS", descricao="Nome técnico: prótese"
+    )
+    assert dispositivos_no_periodo(db, dias=90, apenas_software=True) == []
+
+
+@respx.mock
+async def test_aviso_conta_que_houve_filtro(caminho_db: str) -> None:
+    """Quem lê precisa saber que a varredura não foi completa."""
+    with conectar(caminho_db) as conexao:
+        _inserir_dispositivo(conexao, numero="8.1", nome="CAD4TB", descricao="Software de detecção")
+        gravar_classificacao(
+            conexao,
+            numero_registro="8.1",
+            usa_ia=True,
+            confianca=0.9,
+            justificativa="cacheado",
+            modelo=MODELO,
+        )
+
+    respx.get(f"{ENDPOINT}/models").mock(side_effect=httpx.ConnectError("recusado"))
+    resposta = await buscar_samd_recentes(
+        dias=90,
+        apenas_com_ia=False,
+        apenas_software=True,
+        caminho_db=caminho_db,
+        qwen_endpoint=ENDPOINT,
+        qwen_model=MODELO,
+    )
+    assert resposta.fonte == "duckdb"
+    assert resposta.aviso is not None
+    assert "apenas_software=False" in resposta.aviso
+
+
+@respx.mock
+async def test_negativo_de_baixa_confianca_vira_indeterminado(caminho_db: str) -> None:
+    """'Não usa IA' com confiança 0,2 quer dizer 'não dá para saber' — não some calado."""
+    with conectar(caminho_db) as conexao:
+        _inserir_dispositivo(conexao, numero="8.1", nome="BoneCT", descricao="Software")
+        _inserir_dispositivo(conexao, numero="8.2", nome="PARAFUSO", descricao="Software")
+        gravar_classificacao(
+            conexao,
+            numero_registro="8.1",
+            usa_ia=False,
+            confianca=0.2,
+            justificativa="só nome e fabricante",
+            modelo=MODELO,
+        )
+        gravar_classificacao(
+            conexao,
+            numero_registro="8.2",
+            usa_ia=False,
+            confianca=0.95,
+            justificativa="parafuso físico",
+            modelo=MODELO,
+        )
+
+    respx.get(f"{ENDPOINT}/models").mock(side_effect=httpx.ConnectError("recusado"))
+    resposta = await buscar_samd_recentes(
+        dias=90,
+        apenas_com_ia=True,
+        apenas_software=True,
+        caminho_db=caminho_db,
+        qwen_endpoint=ENDPOINT,
+        qwen_model=MODELO,
+    )
+    assert resposta.total == 0
+    assert resposta.indeterminados == 1
+    assert resposta.aviso is not None and "não permitiu decidir" in resposta.aviso

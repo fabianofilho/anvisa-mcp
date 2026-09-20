@@ -73,13 +73,14 @@ def medicamento(termo: str) -> None:
 
 
 @app.command()
-def samd(dias: int = 90, apenas_com_ia: bool = True) -> None:
+def samd(dias: int = 90, apenas_com_ia: bool = True, apenas_software: bool = True) -> None:
     """Testa a tool de SaMD fora do MCP."""
     config = carregar_config()
     resposta = asyncio.run(
         buscar_samd_recentes(
             dias=dias,
             apenas_com_ia=apenas_com_ia,
+            apenas_software=apenas_software,
             caminho_db=str(config.duckdb_path),
             qwen_endpoint=config.qwen_endpoint,
             qwen_model=config.qwen_model,

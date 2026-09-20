@@ -49,7 +49,9 @@ async def consultar_status_medicamento(nome_ou_principio_ativo: str) -> Resposta
 
 
 @mcp.tool()
-async def buscar_samd_recentes(dias: int = 90, apenas_com_ia: bool = True) -> RespostaSaMD:
+async def buscar_samd_recentes(
+    dias: int = 90, apenas_com_ia: bool = True, apenas_software: bool = True
+) -> RespostaSaMD:
     """Lista dispositivos médicos Classe III/IV registrados recentemente na Anvisa.
 
     Para cada registro, classifica se o produto usa IA ou aprendizado de máquina.
@@ -60,11 +62,16 @@ async def buscar_samd_recentes(dias: int = 90, apenas_com_ia: bool = True) -> Re
     Args:
         dias: tamanho da janela, em dias, a contar de hoje.
         apenas_com_ia: quando True, devolve só os classificados como usando IA.
+        apenas_software: quando True, analisa só registros cujo texto sugere software.
+            SaMD é raro no registro (13 de 1.832 registros Classe III/IV do último ano
+            mencionam software), então sem esse filtro a busca gasta as chamadas de LLM
+            em cânulas e parafusos. Desligue para varrer tudo, ao custo de ser lento.
     """
     config = carregar_config()
     return await _buscar_samd_recentes(
         dias=dias,
         apenas_com_ia=apenas_com_ia,
+        apenas_software=apenas_software,
         caminho_db=str(config.duckdb_path),
         qwen_endpoint=config.qwen_endpoint,
         qwen_model=config.qwen_model,

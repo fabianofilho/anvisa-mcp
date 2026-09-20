@@ -39,16 +39,54 @@ def buscar_medicamentos(
     )
 
 
+# Termos que indicam que o registro pode ser software. SaMD é raro: dos 1.832
+# registros Classe III/IV do último ano, 13 mencionam software. Sem este filtro,
+# os primeiros N por data são cânulas e parafusos, e a busca por SaMD nunca
+# alcança um candidato — gastando uma chamada de LLM em cada um deles.
+TERMOS_SOFTWARE = (
+    "SOFTWARE",
+    "ALGORITMO",
+    "INTELIG",  # inteligência, intelligent
+    "APRENDIZADO",
+    "MACHINE LEARNING",
+    "APLICATIVO",
+    "APP ",
+    "PROGRAMA DE COMPUTADOR",
+    "CAD",  # computer-aided detection/diagnosis
+    "PROCESSAMENTO DE IMAGEM",
+    "ANALISE DE IMAGEM",
+    "ANÁLISE DE IMAGEM",
+)
+
+
 def dispositivos_no_periodo(
     conexao: duckdb.DuckDBPyConnection,
     *,
     dias: int,
     classes: tuple[str, ...] = ("III", "IV"),
     limite: int = 200,
+    apenas_software: bool = False,
 ) -> list[dict[str, Any]]:
-    """Dispositivos registrados nos últimos ``dias``, nas classes de risco dadas."""
+    """Dispositivos registrados nos últimos ``dias``, nas classes de risco dadas.
+
+    Com ``apenas_software``, mantém só registros cujo texto sugere software. É um
+    filtro por palavra-chave, então troca recall por custo: um produto que use IA
+    sem dizer nenhum desses termos fica de fora. Quem chama precisa dizer isso a
+    quem perguntou.
+    """
     corte = date.today() - timedelta(days=dias)
     marcadores = ", ".join("?" for _ in classes)
+    parametros: list[Any] = [corte, *classes]
+
+    filtro_software = ""
+    if apenas_software:
+        condicoes = " OR ".join(
+            "upper(coalesce(descricao, '') || ' ' || nome_produto) LIKE ?" for _ in TERMOS_SOFTWARE
+        )
+        filtro_software = f"AND ({condicoes})"
+        parametros.extend(f"%{termo}%" for termo in TERMOS_SOFTWARE)
+
+    parametros.append(limite)
     return _para_dicts(
         conexao.execute(
             f"""
@@ -57,13 +95,14 @@ def dispositivos_no_periodo(
             FROM dispositivos_medicos
             WHERE data_registro >= ?
               AND classe_risco IN ({marcadores})
+              {filtro_software}
             -- numero_registro desempata: sem ele, registros com a mesma data
             -- saem em ordem arbitrária e o LIMIT devolve um conjunto diferente
             -- a cada chamada, furando o cache de classificação.
             ORDER BY data_registro DESC, numero_registro
             LIMIT ?
             """,
-            [corte, *classes, limite],
+            parametros,
         )
     )
 

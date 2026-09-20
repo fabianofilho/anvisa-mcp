@@ -55,6 +55,9 @@ class DispositivoSaMD(BaseModel):
     classificacao: ClassificacaoIA
 
 
+LIMIAR_INDETERMINADO = 0.5
+
+
 class RespostaSaMD(BaseModel):
     """Retorno estruturado da tool."""
 
@@ -65,6 +68,14 @@ class RespostaSaMD(BaseModel):
     )
     total: int
     resultados: list[DispositivoSaMD]
+    indeterminados: int = Field(
+        default=0,
+        description=(
+            "Quantos registros ficaram de fora por terem sido classificados como sem IA "
+            "com confiança baixa — ou seja, o texto não permitiu decidir, o que não é o "
+            "mesmo que não usar IA"
+        ),
+    )
     aviso: str | None = None
 
 
@@ -107,6 +118,11 @@ AVISO_BASE_TRAVADA = (
 AVISO_HEURISTICA = (
     "A Anvisa não publica campo estruturado de uso de IA. A classificação abaixo é "
     "heurística, feita por LLM lendo o texto do registro: confira a justificativa."
+)
+AVISO_FILTRO_SOFTWARE = (
+    "Só foram analisados registros cujo texto sugere software (por palavra-chave). "
+    "Um produto que use IA sem mencionar esses termos não aparece aqui. "
+    "Para varrer todos os dispositivos do período, use apenas_software=False."
 )
 
 
@@ -194,6 +210,7 @@ def _persistir_classificacoes(caminho_db: str, pendentes: list[dict[str, Any]]) 
 async def buscar_samd_recentes(
     dias: int = 90,
     apenas_com_ia: bool = True,
+    apenas_software: bool = True,
     *,
     caminho_db: str,
     qwen_endpoint: str,
@@ -202,7 +219,13 @@ async def buscar_samd_recentes(
     max_tentativas: int = 3,
     limite: int = 50,
 ) -> RespostaSaMD:
-    """Dispositivos Classe III/IV registrados nos últimos ``dias``, com uso de IA classificado."""
+    """Dispositivos Classe III/IV registrados nos últimos ``dias``, com uso de IA classificado.
+
+    ``apenas_software`` filtra por palavra-chave antes de gastar chamadas de LLM.
+    Sem ele, os primeiros registros por data são quase sempre cânulas, parafusos e
+    testes rápidos: no último ano, 13 de 1.832 registros Classe III/IV mencionam
+    software. O filtro troca recall por custo, e o aviso da resposta diz isso.
+    """
     if dias <= 0:
         return RespostaSaMD(
             dias=dias,
@@ -219,7 +242,9 @@ async def buscar_samd_recentes(
     pendentes: list[dict[str, Any]] = []
     try:
         with conectar(caminho_db, somente_leitura=True) as conexao:
-            registros = dispositivos_no_periodo(conexao, dias=dias, limite=limite)
+            registros = dispositivos_no_periodo(
+                conexao, dias=dias, limite=limite, apenas_software=apenas_software
+            )
             if registros:
                 resposta, pendentes = await _montar_resposta(
                     conexao,
@@ -231,7 +256,11 @@ async def buscar_samd_recentes(
                     qwen_model=qwen_model,
                     timeout_segundos=timeout_segundos,
                     max_tentativas=max_tentativas,
-                    aviso=AVISO_HEURISTICA,
+                    aviso=(
+                        f"{AVISO_HEURISTICA} {AVISO_FILTRO_SOFTWARE}"
+                        if apenas_software
+                        else AVISO_HEURISTICA
+                    ),
                 )
     except FileNotFoundError:
         pass
@@ -305,7 +334,17 @@ async def _montar_resposta(
             for registro in registros
         ]
 
+    indeterminados = 0
     if apenas_com_ia:
+        # Um "não" com confiança baixa quer dizer "o texto não deixa saber". Sumir
+        # com esses em silêncio esconderia justamente os casos duvidosos, então
+        # eles saem da lista mas entram na contagem.
+        indeterminados = sum(
+            1
+            for item in itens
+            if not item.classificacao.usa_ia
+            and (item.classificacao.confianca or 0.0) < LIMIAR_INDETERMINADO
+        )
         itens = [item for item in itens if item.classificacao.usa_ia]
 
     return (
@@ -315,7 +354,14 @@ async def _montar_resposta(
             fonte=fonte,
             total=len(itens),
             resultados=itens,
-            aviso=aviso,
+            indeterminados=indeterminados,
+            aviso=(
+                f"{aviso} {indeterminados} registro(s) ficaram de fora por confiança "
+                "abaixo de 0,5: o texto do registro não permitiu decidir, o que não "
+                "significa que não usem IA."
+                if indeterminados
+                else aviso
+            ),
         ),
         pendentes,
     )

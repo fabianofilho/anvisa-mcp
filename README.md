@@ -99,9 +99,16 @@ lendo o texto livre do registro, então cada item traz `confianca`, `justificati
 Busca por nome comercial ou princípio ativo, sem acento e sem caixa. Devolve todos os
 registros que casam — grafias variam e a ambiguidade é de quem pergunta.
 
-### `buscar_samd_recentes(dias=90, apenas_com_ia=True)`
+### `buscar_samd_recentes(dias=90, apenas_com_ia=True, apenas_software=True)`
 Dispositivos Classe III/IV registrados na janela, cada um classificado quanto a uso de
 IA. A classificação fica cacheada no DuckDB: o mesmo registro não é reclassificado a
 cada chamada.
+
+**Por que existe o `apenas_software`:** no último ano há 1.832 registros Classe III/IV, e
+só 13 mencionam software. Ordenando por data, os primeiros são cânulas, parafusos e
+testes rápidos — numa varredura de 60 registros recentes, zero eram software. O filtro
+por palavra-chave manda as chamadas de LLM para candidatos plausíveis. É recall trocado
+por custo: um produto que use IA sem dizer "software", "algoritmo", "CAD" e afins fica de
+fora, e o aviso da resposta diz isso. Use `apenas_software=False` para varrer tudo.
 
 As duas são independentes: nenhuma depende da outra ter rodado antes.
