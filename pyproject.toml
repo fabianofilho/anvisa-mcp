@@ -1,0 +1,58 @@
+[project]
+name = "anvisa-mcp"
+version = "0.1.0"
+description = "Servidor MCP para consulta regulatória da Anvisa: status de registro de medicamentos e detecção de SaMD com IA"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "mcp>=1.2",
+    "httpx>=0.28",
+    "beautifulsoup4>=4.12",
+    "duckdb>=1.1",
+    "apscheduler>=3.10",
+    "typer>=0.15",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "jinja2>=3.1",
+    "python-dotenv>=1.0",
+]
+
+[project.scripts]
+anvisa-mcp = "anvisa_mcp.mcp_server.server:main"
+anvisa-cli = "anvisa_mcp.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "respx>=0.22",
+    "ruff>=0.8",
+    "mypy>=1.13",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/anvisa_mcp"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src"]
+
+[[tool.mypy.overrides]]
+module = ["apscheduler.*"]
+ignore_missing_imports = true

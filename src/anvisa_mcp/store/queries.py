@@ -1,0 +1,111 @@
+"""Queries SQL reutilizáveis sobre o DuckDB local."""
+
+from __future__ import annotations
+
+from datetime import date, timedelta
+from typing import Any
+
+import duckdb
+
+
+def buscar_medicamentos(
+    conexao: duckdb.DuckDBPyConnection,
+    termo: str,
+    *,
+    limite: int = 20,
+) -> list[dict[str, Any]]:
+    """Busca por nome comercial OU princípio ativo, tolerante a grafia.
+
+    Casa por substring sem acento e sem caixa; ordena por proximidade com o termo,
+    para que "dipirona" traga "DIPIRONA MONOIDRATADA" antes de nomes longos.
+    """
+    padrao = f"%{termo.strip()}%"
+    return _para_dicts(
+        conexao.execute(
+            """
+            SELECT numero_registro, nome_produto, principio_ativo, empresa_detentora,
+                   situacao, data_situacao, categoria
+            FROM medicamentos
+            WHERE strip_accents(lower(nome_produto)) LIKE strip_accents(lower(?))
+               OR strip_accents(lower(coalesce(principio_ativo, ''))) LIKE strip_accents(lower(?))
+            ORDER BY length(nome_produto), nome_produto
+            LIMIT ?
+            """,
+            [padrao, padrao, limite],
+        )
+    )
+
+
+def dispositivos_no_periodo(
+    conexao: duckdb.DuckDBPyConnection,
+    *,
+    dias: int,
+    classes: tuple[str, ...] = ("III", "IV"),
+    limite: int = 200,
+) -> list[dict[str, Any]]:
+    """Dispositivos registrados nos últimos ``dias``, nas classes de risco dadas."""
+    corte = date.today() - timedelta(days=dias)
+    marcadores = ", ".join("?" for _ in classes)
+    return _para_dicts(
+        conexao.execute(
+            f"""
+            SELECT numero_registro, nome_produto, empresa_detentora, classe_risco,
+                   situacao, data_registro, descricao
+            FROM dispositivos_medicos
+            WHERE data_registro >= ?
+              AND classe_risco IN ({marcadores})
+            ORDER BY data_registro DESC
+            LIMIT ?
+            """,
+            [corte, *classes, limite],
+        )
+    )
+
+
+def classificacao_em_cache(
+    conexao: duckdb.DuckDBPyConnection,
+    numero_registro: str,
+) -> dict[str, Any] | None:
+    """Classificação já calculada para esse registro, se houver."""
+    linhas = _para_dicts(
+        conexao.execute(
+            """
+            SELECT numero_registro, usa_ia, confianca, justificativa, modelo, classificado_em
+            FROM classificacoes_samd
+            WHERE numero_registro = ?
+            """,
+            [numero_registro],
+        )
+    )
+    return linhas[0] if linhas else None
+
+
+def gravar_classificacao(
+    conexao: duckdb.DuckDBPyConnection,
+    *,
+    numero_registro: str,
+    usa_ia: bool,
+    confianca: float,
+    justificativa: str,
+    modelo: str,
+) -> None:
+    """Grava (ou atualiza) a classificação de um registro."""
+    conexao.execute(
+        """
+        INSERT INTO classificacoes_samd
+            (numero_registro, usa_ia, confianca, justificativa, modelo)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT (numero_registro) DO UPDATE SET
+            usa_ia = excluded.usa_ia,
+            confianca = excluded.confianca,
+            justificativa = excluded.justificativa,
+            modelo = excluded.modelo,
+            classificado_em = now()
+        """,
+        [numero_registro, usa_ia, confianca, justificativa, modelo],
+    )
+
+
+def _para_dicts(resultado: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
+    colunas = [d[0] for d in resultado.description or []]
+    return [dict(zip(colunas, linha, strict=True)) for linha in resultado.fetchall()]

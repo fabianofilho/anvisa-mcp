@@ -1,0 +1,126 @@
+"""CLI de administração: sync manual e teste das tools fora do MCP."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+
+import typer
+
+from anvisa_mcp.config import carregar_config
+from anvisa_mcp.data.sources import FONTES, FonteNaoConfigurada
+from anvisa_mcp.data.sync import sync_dispositivos_medicos, sync_medicamentos
+from anvisa_mcp.llm.qwen_client import QwenClient
+from anvisa_mcp.mcp_server.tools.medicamentos import consultar_status_medicamento
+from anvisa_mcp.mcp_server.tools.samd import buscar_samd_recentes
+from anvisa_mcp.store.db import conectar
+
+app = typer.Typer(help="Administração do anvisa-mcp", no_args_is_help=True)
+
+
+def _configurar_log(nivel: str) -> None:
+    logging.basicConfig(
+        level=getattr(logging, nivel.upper(), logging.INFO),
+        format="%(levelname)s %(name)s: %(message)s",
+    )
+
+
+@app.command()
+def fontes() -> None:
+    """Mostra as fontes de dados e se a URL já foi confirmada."""
+    for chave, fonte in FONTES.items():
+        estado = fonte.url or "URL NÃO CONFIRMADA"
+        typer.echo(f"{chave}: {estado}")
+        typer.echo(f"  {fonte.descricao}")
+        if not fonte.url:
+            typer.echo(f"  como confirmar: {fonte.onde_encontrar}")
+
+
+@app.command()
+def sync(
+    fonte: str = typer.Option("todas", help="medicamentos, dispositivos_medicos ou todas"),
+) -> None:
+    """Roda o sync dos datasets públicos agora."""
+    config = carregar_config()
+    _configurar_log(config.log_level)
+
+    async def rodar() -> None:
+        with conectar(config.duckdb_path) as conexao:
+            tarefas = {
+                "medicamentos": sync_medicamentos,
+                "dispositivos_medicos": sync_dispositivos_medicos,
+            }
+            escolhidas = tarefas if fonte == "todas" else {fonte: tarefas[fonte]}
+            for nome, tarefa in escolhidas.items():
+                try:
+                    resultado = await tarefa(conexao)
+                    typer.echo(
+                        f"{nome}: {resultado.novos} novos, {resultado.atualizados} atualizados"
+                    )
+                except FonteNaoConfigurada as erro:
+                    typer.secho(f"{nome}: {erro}", fg=typer.colors.YELLOW)
+
+    asyncio.run(rodar())
+
+
+@app.command()
+def medicamento(termo: str) -> None:
+    """Testa a tool de medicamentos fora do MCP."""
+    config = carregar_config()
+    resposta = asyncio.run(consultar_status_medicamento(termo, caminho_db=str(config.duckdb_path)))
+    typer.echo(resposta.model_dump_json(indent=2))
+
+
+@app.command()
+def samd(dias: int = 90, apenas_com_ia: bool = True) -> None:
+    """Testa a tool de SaMD fora do MCP."""
+    config = carregar_config()
+    resposta = asyncio.run(
+        buscar_samd_recentes(
+            dias=dias,
+            apenas_com_ia=apenas_com_ia,
+            caminho_db=str(config.duckdb_path),
+            qwen_endpoint=config.qwen_endpoint,
+            qwen_model=config.qwen_model,
+            timeout_segundos=config.qwen_timeout_segundos,
+            max_tentativas=config.qwen_max_tentativas,
+        )
+    )
+    typer.echo(resposta.model_dump_json(indent=2))
+
+
+@app.command()
+def llm() -> None:
+    """Verifica se o LLM local (ODS) está respondendo."""
+    config = carregar_config()
+
+    async def checar() -> None:
+        async with QwenClient(config.qwen_endpoint, config.qwen_model) as cliente:
+            if not await cliente.esta_vivo():
+                typer.secho(f"LLM local fora do ar em {config.qwen_endpoint}", fg=typer.colors.RED)
+                raise typer.Exit(code=1)
+            resposta = await cliente.chat(
+                [{"role": "user", "content": "Responda apenas: pronto"}], max_tokens=20
+            )
+            typer.secho(f"LLM respondeu: {resposta.strip()}", fg=typer.colors.GREEN)
+            typer.echo(f"endpoint: {config.qwen_endpoint}  modelo: {config.qwen_model}")
+
+    asyncio.run(checar())
+
+
+@app.command()
+def schema() -> None:
+    """Mostra as tabelas do DuckDB local."""
+    config = carregar_config()
+    with conectar(config.duckdb_path) as conexao:
+        tabelas = conexao.execute("SHOW TABLES").fetchall()
+        contagens: dict[str, int] = {}
+        for (tabela,) in tabelas:
+            linha = conexao.execute(f"SELECT count(*) FROM {tabela}").fetchone()
+            contagens[tabela] = int(linha[0]) if linha else 0
+    typer.echo(json.dumps(contagens, indent=2))
+
+
+if __name__ == "__main__":
+    app()

@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Ferramentas
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Dados locais e segredos
+*.duckdb
+*.duckdb.wal
+.env
+data/
+!src/anvisa_mcp/data/
