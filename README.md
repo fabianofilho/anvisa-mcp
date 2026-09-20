@@ -48,6 +48,25 @@ uv run anvisa-mcp            # sobe o servidor MCP no stdio
 
 `make` cobre os mesmos caminhos (`make test`, `make lint`, `make typecheck`).
 
+## Ligando ao Claude Code
+
+Registrado em escopo de usuário (vale em qualquer projeto desta máquina):
+
+```bash
+claude mcp add anvisa --scope user \
+  -e DUCKDB_PATH=/caminho/para/anvisa-mcp/data/anvisa.duckdb \
+  -e QWEN_ENDPOINT=http://127.0.0.1:8080/v1 \
+  -e QWEN_MODEL=local-model \
+  -e LOG_LEVEL=WARNING \
+  -- uv --directory /caminho/para/anvisa-mcp run anvisa-mcp
+```
+
+Os caminhos são absolutos de propósito: o servidor é lançado de qualquer diretório, então
+`./data/anvisa.duckdb` relativo não resolveria. `uv --directory` entra no projeto antes de
+rodar; `DUCKDB_PATH` absoluto garante a base certa mesmo assim.
+
+Conferir com `claude mcp get anvisa`, remover com `claude mcp remove anvisa -s user`.
+
 ## LLM local
 
 Os defaults do `.env.example` apontam para o llama.cpp servido pelo ODS nesta máquina:
