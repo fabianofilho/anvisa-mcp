@@ -71,17 +71,46 @@ def aplicar_schema(conexao: duckdb.DuckDBPyConnection) -> None:
     )
 
 
+class BaseIndisponivel(RuntimeError):
+    """A base existe mas não pôde ser aberta agora — tipicamente um sync em curso.
+
+    O DuckDB tranca o arquivo para um único escritor e bloqueia até os leitores
+    enquanto isso. Distinguir este caso de "base vazia" importa: são respostas
+    diferentes para quem perguntou.
+    """
+
+
 @contextmanager
-def conectar(caminho: Path | str) -> Iterator[duckdb.DuckDBPyConnection]:
+def conectar(
+    caminho: Path | str,
+    *,
+    somente_leitura: bool = False,
+) -> Iterator[duckdb.DuckDBPyConnection]:
     """Abre o DuckDB no caminho dado, criando o diretório e o schema se preciso.
 
-    ``:memory:`` é aceito e serve aos testes.
+    Com ``somente_leitura``, não cria nada e não aplica schema: serve às tools,
+    que só consultam. ``:memory:`` é aceito e serve aos testes.
+
+    Raises:
+        FileNotFoundError: em modo leitura, quando a base ainda não existe.
+        BaseIndisponivel: quando o arquivo existe mas está travado por outro processo.
     """
-    if str(caminho) != ":memory:":
+    em_memoria = str(caminho) == ":memory:"
+
+    if somente_leitura and not em_memoria and not Path(caminho).exists():
+        raise FileNotFoundError(f"base local ainda não existe em {caminho}")
+
+    if not somente_leitura and not em_memoria:
         Path(caminho).parent.mkdir(parents=True, exist_ok=True)
-    conexao = duckdb.connect(str(caminho))
+
     try:
-        aplicar_schema(conexao)
+        conexao = duckdb.connect(str(caminho), read_only=somente_leitura and not em_memoria)
+    except duckdb.IOException as erro:
+        raise BaseIndisponivel(str(erro)) from erro
+
+    try:
+        if not somente_leitura:
+            aplicar_schema(conexao)
         yield conexao
     finally:
         conexao.close()

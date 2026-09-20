@@ -92,3 +92,21 @@ async def test_termo_vazio_nao_consulta(termo: str, caminho_db: str) -> None:
     resposta = await consultar_status_medicamento(termo, caminho_db=caminho_db)
     assert resposta.total == 0
     assert resposta.aviso is not None
+
+
+def test_ativos_vem_antes_dos_inativos(db: duckdb.DuckDBPyConnection) -> None:
+    """Dois terços da base real são inativos; o que ainda vale vem primeiro."""
+    _inserir(
+        db, numero_registro="1", nome_produto="AA", principio_ativo="dipirona", situacao="Inativo"
+    )
+    _inserir(
+        db,
+        numero_registro="2",
+        nome_produto="NOME BEM MAIS LONGO",
+        principio_ativo="dipirona",
+        situacao="Ativo",
+    )
+    assert [r["nome_produto"] for r in buscar_medicamentos(db, "dipirona")] == [
+        "NOME BEM MAIS LONGO",
+        "AA",
+    ]

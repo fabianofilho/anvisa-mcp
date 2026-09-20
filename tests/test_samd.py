@@ -108,9 +108,9 @@ async def test_classify_tolera_json_embrulhado_em_prosa() -> None:
     """Modelo pequeno às vezes explica antes do JSON; não é motivo para falhar."""
     respx.post(f"{ENDPOINT}/chat/completions").mock(
         return_value=_resposta_chat(
-            'Claro! Segue:\n'
+            "Claro! Segue:\n"
             '{"usa_ia": false, "confianca": 0.7, "justificativa": "PACS"}\n'
-            'Espero ter ajudado.'
+            "Espero ter ajudado."
         )
     )
     async with QwenClient(ENDPOINT, MODELO) as cliente:
@@ -251,3 +251,13 @@ async def test_classificacao_sempre_marcada_como_heuristica(caminho_db: str) -> 
     )
     assert all(item.classificacao.heuristica for item in resposta.resultados)
     assert resposta.aviso is not None and "heurística" in resposta.aviso
+
+
+def test_ordem_estavel_com_datas_empatadas(db: duckdb.DuckDBPyConnection) -> None:
+    """Sem desempate, o LIMIT devolve um conjunto diferente a cada chamada."""
+    for numero in ("300", "100", "200"):
+        _inserir_dispositivo(db, numero=numero, nome=f"DISP {numero}", dias_atras=5)
+
+    primeira = [d["numero_registro"] for d in dispositivos_no_periodo(db, dias=90, limite=2)]
+    segunda = [d["numero_registro"] for d in dispositivos_no_periodo(db, dias=90, limite=2)]
+    assert primeira == segunda == ["100", "200"]

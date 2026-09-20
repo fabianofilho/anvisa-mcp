@@ -32,6 +32,13 @@ Saída: {"usa_ia": true, "confianca": 0.8, "justificativa": "Algoritmo que apren
 Regras da resposta:
 - Responda SOMENTE com um objeto JSON, sem texto antes ou depois.
 - Campos: usa_ia (booleano), confianca (número de 0 a 1), justificativa (uma frase curta em português).
-- A documentação da Anvisa costuma ser vaga. Se o texto não deixa claro, responda
-  usa_ia false com confianca baixa e diga na justificativa que o texto é insuficiente.
+- A documentação da Anvisa costuma ser vaga. O texto que você recebe muitas vezes é só
+  nome técnico, nome comercial e fabricante, sem descrição de funcionamento.
+- Calibre a confianca pelo que o texto permite afirmar, não pela sua convicção:
+  - 0.85 a 1.0 só quando o texto descreve o funcionamento e ele é claro num sentido.
+  - 0.5 a 0.7 quando o tipo de produto é evidente pelo nome (cânula, parafuso, teste
+    rápido, reagente) e claramente não é software.
+  - 0.2 a 0.4 quando o texto traz apenas nome e fabricante e você está inferindo.
+- Na dúvida responda usa_ia false com confianca baixa, dizendo na justificativa que o
+  texto é insuficiente.
 - Nunca invente característica que o texto não menciona.

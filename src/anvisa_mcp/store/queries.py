@@ -16,8 +16,10 @@ def buscar_medicamentos(
 ) -> list[dict[str, Any]]:
     """Busca por nome comercial OU princípio ativo, tolerante a grafia.
 
-    Casa por substring sem acento e sem caixa; ordena por proximidade com o termo,
-    para que "dipirona" traga "DIPIRONA MONOIDRATADA" antes de nomes longos.
+    Casa por substring sem acento e sem caixa. Registros ativos vêm primeiro:
+    dois terços da base são inativos, e quem pergunta "qual o status de X"
+    normalmente quer saber do que ainda vale. Depois, nomes mais curtos, que
+    tendem a ser o produto em si e não uma apresentação específica.
     """
     padrao = f"%{termo.strip()}%"
     return _para_dicts(
@@ -28,7 +30,8 @@ def buscar_medicamentos(
             FROM medicamentos
             WHERE strip_accents(lower(nome_produto)) LIKE strip_accents(lower(?))
                OR strip_accents(lower(coalesce(principio_ativo, ''))) LIKE strip_accents(lower(?))
-            ORDER BY length(nome_produto), nome_produto
+            ORDER BY (lower(coalesce(situacao, '')) = 'ativo') DESC,
+                     length(nome_produto), nome_produto
             LIMIT ?
             """,
             [padrao, padrao, limite],
@@ -54,7 +57,10 @@ def dispositivos_no_periodo(
             FROM dispositivos_medicos
             WHERE data_registro >= ?
               AND classe_risco IN ({marcadores})
-            ORDER BY data_registro DESC
+            -- numero_registro desempata: sem ele, registros com a mesma data
+            -- saem em ordem arbitrária e o LIMIT devolve um conjunto diferente
+            -- a cada chamada, furando o cache de classificação.
+            ORDER BY data_registro DESC, numero_registro
             LIMIT ?
             """,
             [corte, *classes, limite],

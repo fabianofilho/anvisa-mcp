@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 from anvisa_mcp.llm.classify_samd import classificar_dispositivo
 from anvisa_mcp.llm.qwen_client import QwenClient, QwenIndisponivel
-from anvisa_mcp.store.db import conectar
+from anvisa_mcp.store.db import BaseIndisponivel, conectar
 from anvisa_mcp.store.queries import (
     classificacao_em_cache,
     dispositivos_no_periodo,
@@ -97,6 +97,11 @@ _MOCK: list[dict[str, Any]] = [
 
 AVISO_MOCK = (
     "Dados de exemplo: a base local ainda não foi sincronizada com a Anvisa. "
+    "Rode 'anvisa-cli sync'. Não use como informação regulatória."
+)
+AVISO_BASE_TRAVADA = (
+    "Dados de exemplo: a base local existe mas não pôde ser lida agora — "
+    "provavelmente há um sync em andamento. Tente de novo em alguns minutos. "
     "Não use como informação regulatória."
 )
 AVISO_HEURISTICA = (
@@ -112,6 +117,7 @@ async def _classificar(
     *,
     modelo: str,
     usar_cache: bool,
+    a_gravar: list[dict[str, Any]] | None = None,
 ) -> ClassificacaoIA:
     """Classificação de um registro: cache primeiro, LLM depois, erro claro por último."""
     numero = registro["numero_registro"]
@@ -147,18 +153,16 @@ async def _classificar(
             origem="indisponivel",
         )
 
-    if conexao is not None:
-        try:
-            gravar_classificacao(
-                conexao,
-                numero_registro=numero,
-                usa_ia=resultado.usa_ia,
-                confianca=resultado.confianca,
-                justificativa=resultado.justificativa,
-                modelo=modelo,
-            )
-        except Exception:  # noqa: BLE001 - cache é otimização, não pode derrubar a tool
-            logger.exception("não consegui gravar a classificação de %s", numero)
+    if a_gravar is not None:
+        a_gravar.append(
+            {
+                "numero_registro": numero,
+                "usa_ia": resultado.usa_ia,
+                "confianca": resultado.confianca,
+                "justificativa": resultado.justificativa,
+                "modelo": modelo,
+            }
+        )
 
     return ClassificacaoIA(
         usa_ia=resultado.usa_ia,
@@ -166,6 +170,25 @@ async def _classificar(
         justificativa=resultado.justificativa,
         origem="llm",
     )
+
+
+def _persistir_classificacoes(caminho_db: str, pendentes: list[dict[str, Any]]) -> None:
+    """Grava o cache numa conexão de escrita própria.
+
+    A consulta roda em modo leitura (para não brigar com o sync pelo lock), mas
+    o cache precisa escrever. Se a base estiver travada, o cache é pulado: é
+    otimização, não resposta.
+    """
+    if not pendentes:
+        return
+    try:
+        with conectar(caminho_db) as conexao:
+            for item in pendentes:
+                gravar_classificacao(conexao, **item)
+    except BaseIndisponivel as erro:
+        logger.warning("cache não gravado (base ocupada): %s", erro)
+    except Exception:  # noqa: BLE001 - cache é otimização, não pode derrubar a tool
+        logger.exception("cache não gravado")
 
 
 async def buscar_samd_recentes(
@@ -191,11 +214,14 @@ async def buscar_samd_recentes(
         )
 
     fonte: Fonte = "duckdb"
+    motivo_mock = AVISO_MOCK
+    resposta: RespostaSaMD | None = None
+    pendentes: list[dict[str, Any]] = []
     try:
-        with conectar(caminho_db) as conexao:
+        with conectar(caminho_db, somente_leitura=True) as conexao:
             registros = dispositivos_no_periodo(conexao, dias=dias, limite=limite)
             if registros:
-                return await _montar_resposta(
+                resposta, pendentes = await _montar_resposta(
                     conexao,
                     registros,
                     dias,
@@ -207,10 +233,22 @@ async def buscar_samd_recentes(
                     max_tentativas=max_tentativas,
                     aviso=AVISO_HEURISTICA,
                 )
-    except Exception:  # noqa: BLE001 - base indisponível não pode derrubar a tool
-        logger.exception("falha ao consultar o DuckDB; caindo para mock")
+    except FileNotFoundError:
+        pass
+    except BaseIndisponivel as erro:
+        logger.warning("base local indisponível: %s", erro)
+        motivo_mock = AVISO_BASE_TRAVADA
+    except Exception:  # noqa: BLE001 - nenhuma falha de base pode derrubar a tool
+        logger.exception("falha ao consultar o DuckDB")
+        motivo_mock = AVISO_BASE_TRAVADA
 
-    return await _montar_resposta(
+    if resposta is not None:
+        # Fora do 'with': o DuckDB recusa uma conexão de escrita enquanto uma
+        # de leitura ao mesmo arquivo está aberta no mesmo processo.
+        _persistir_classificacoes(caminho_db, pendentes)
+        return resposta
+
+    mock, _ = await _montar_resposta(
         None,
         _MOCK,
         dias,
@@ -220,8 +258,9 @@ async def buscar_samd_recentes(
         qwen_model=qwen_model,
         timeout_segundos=timeout_segundos,
         max_tentativas=max_tentativas,
-        aviso=f"{AVISO_MOCK} {AVISO_HEURISTICA}",
+        aviso=f"{motivo_mock} {AVISO_HEURISTICA}",
     )
+    return mock
 
 
 async def _montar_resposta(
@@ -236,7 +275,8 @@ async def _montar_resposta(
     timeout_segundos: float,
     max_tentativas: int,
     aviso: str,
-) -> RespostaSaMD:
+) -> tuple[RespostaSaMD, list[dict[str, Any]]]:
+    pendentes: list[dict[str, Any]] = []
     async with QwenClient(
         qwen_endpoint,
         qwen_model,
@@ -254,7 +294,12 @@ async def _montar_resposta(
                 situacao=registro.get("situacao"),
                 data_registro=registro.get("data_registro"),
                 classificacao=await _classificar(
-                    conexao, ativo, registro, modelo=qwen_model, usar_cache=fonte == "duckdb"
+                    conexao,
+                    ativo,
+                    registro,
+                    modelo=qwen_model,
+                    usar_cache=fonte == "duckdb",
+                    a_gravar=pendentes if fonte == "duckdb" else None,
                 ),
             )
             for registro in registros
@@ -263,11 +308,14 @@ async def _montar_resposta(
     if apenas_com_ia:
         itens = [item for item in itens if item.classificacao.usa_ia]
 
-    return RespostaSaMD(
-        dias=dias,
-        apenas_com_ia=apenas_com_ia,
-        fonte=fonte,
-        total=len(itens),
-        resultados=itens,
-        aviso=aviso,
+    return (
+        RespostaSaMD(
+            dias=dias,
+            apenas_com_ia=apenas_com_ia,
+            fonte=fonte,
+            total=len(itens),
+            resultados=itens,
+            aviso=aviso,
+        ),
+        pendentes,
     )

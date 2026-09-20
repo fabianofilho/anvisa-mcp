@@ -4,15 +4,36 @@ Servidor MCP que expõe consulta regulatória da Anvisa a um LLM: status de regi
 medicamentos e detecção de SaMD (Software as a Medical Device) recém-registrados que
 usam IA. Fala com o Qwen local servido pelo ODS na mesma máquina.
 
-## Estado: fase 1 (esqueleto validado)
+## Estado
 
-As duas tools respondem, e a conexão com o LLM local foi validada. **As tools ainda
-devolvem dados de exemplo** enquanto a base local não for sincronizada — toda resposta
-carrega `fonte: "mock"` e um aviso explícito. Nada de mock é apresentado como registro
-real.
+As duas tools respondem, a conexão com o LLM local foi validada e as fontes de dados da
+Anvisa estão confirmadas. Rode `anvisa-cli sync` para popular a base local; enquanto ela
+estiver vazia, as tools devolvem dados de exemplo com `fonte: "mock"` e aviso explícito.
+Nada de mock é apresentado como registro real.
 
-O que falta para a fase 2: confirmar as URLs dos datasets abertos da Anvisa
-(`anvisa-cli fontes` mostra o que está pendente). Nenhuma URL foi inventada.
+## Fontes de dados
+
+Confirmadas em 2026-09-20 baixando os arquivos e lendo o cabeçalho real — não deduzidas
+de documentação. O índice publicado fica em <https://dados.anvisa.gov.br/dados/>.
+
+| Dataset | Arquivo | Tamanho |
+| --- | --- | --- |
+| Medicamentos registrados | `DADOS_ABERTOS_MEDICAMENTOS.csv` | ~8 MB |
+| Produtos para saúde (dispositivos médicos) | `TA_PRODUTO_SAUDE_SITE.csv` | ~28 MB |
+
+Ambos em ISO-8859-1, separador `;`, atualizados diariamente (D-1).
+
+Duas escolhas que valem explicação:
+
+- `TA_PRODUTO_SAUDE_MODELO.csv` traz descrição por modelo, que seria um texto melhor para
+  classificar, mas tem **1 GB** e não é atualizado desde dezembro de 2025. Ficou de fora.
+- `TA_CONSULTA_PRODUTOS_SAUDE.CSV` (53 MB) é um dump de ETL com 24 colunas de processo;
+  `TA_PRODUTO_SAUDE_SITE.csv` é o mesmo registro em forma limpa. Ficou o segundo.
+
+**Limite conhecido:** o arquivo de produtos para saúde não tem campo de descrição livre.
+O texto que alimenta a classificação de IA é montado de nome técnico, nome comercial e
+fabricante — é pouco, e a confiança devolvida reflete isso. Um produto cujo nome não diga
+"software" ou "sistema" dificilmente será classificado com confiança alta.
 
 ## Rodando
 
@@ -38,6 +59,21 @@ Os defaults do `.env.example` apontam para o llama.cpp servido pelo ODS nesta m�
 
 Se o ODS estiver fora do ar, a tool de SaMD devolve cada item com
 `classificacao.origem = "indisponivel"` e segue respondendo: o servidor MCP não trava.
+
+## Base local e concorrência
+
+O DuckDB é um arquivo com **um escritor por vez**, e enquanto o sync escreve ele bloqueia
+até leitores. Por isso:
+
+- As tools abrem a base em **modo leitura**; o sync é o único escritor.
+- Durante um sync, as tools caem para os dados de exemplo — mas o aviso diz que a base
+  está ocupada, não que ela está vazia. As duas situações são diferentes e a resposta
+  precisa distinguir.
+- O cache de classificação é gravado **depois** de fechar a conexão de leitura: o DuckDB
+  recusa abrir escrita e leitura no mesmo arquivo dentro do mesmo processo.
+
+O sync carrega os registros numa tabela temporária e faz um único upsert em massa. Com
+upsert linha a linha, os ~133 mil registros levavam 4min27; em lote, 52s.
 
 ## Arquitetura
 

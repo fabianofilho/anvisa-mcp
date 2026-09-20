@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from anvisa_mcp.store.db import conectar
+from anvisa_mcp.store.db import BaseIndisponivel, conectar
 from anvisa_mcp.store.queries import buscar_medicamentos
 
 logger = logging.getLogger(__name__)
@@ -68,6 +68,11 @@ _MOCK: list[dict[str, Any]] = [
 
 AVISO_MOCK = (
     "Dados de exemplo: a base local ainda não foi sincronizada com a Anvisa. "
+    "Rode 'anvisa-cli sync'. Não use como informação regulatória."
+)
+AVISO_BASE_TRAVADA = (
+    "Dados de exemplo: a base local existe mas não pôde ser lida agora — "
+    "provavelmente há um sync em andamento. Tente de novo em alguns minutos. "
     "Não use como informação regulatória."
 )
 
@@ -103,12 +108,22 @@ async def consultar_status_medicamento(
             aviso="Informe um nome comercial ou princípio ativo.",
         )
 
+    motivo = AVISO_MOCK
     try:
-        with conectar(caminho_db) as conexao:
+        with conectar(caminho_db, somente_leitura=True) as conexao:
             linhas = buscar_medicamentos(conexao, termo, limite=limite)
-    except Exception:  # noqa: BLE001 - base indisponível não pode derrubar a tool
-        logger.exception("falha ao consultar o DuckDB; caindo para mock")
+    except FileNotFoundError:
         linhas = []
+    except BaseIndisponivel as erro:
+        # A base tem dados, mas está travada (sync em curso). Dizer "não
+        # sincronizada" seria falso; o aviso precisa nomear a causa real.
+        logger.warning("base local indisponível: %s", erro)
+        linhas = []
+        motivo = AVISO_BASE_TRAVADA
+    except Exception:  # noqa: BLE001 - nenhuma falha de base pode derrubar a tool
+        logger.exception("falha ao consultar o DuckDB")
+        linhas = []
+        motivo = AVISO_BASE_TRAVADA
 
     if linhas:
         return RespostaMedicamentos(
@@ -124,5 +139,5 @@ async def consultar_status_medicamento(
         fonte="mock",
         total=len(mock),
         resultados=[RegistroMedicamento.model_validate(linha) for linha in mock],
-        aviso=AVISO_MOCK,
+        aviso=motivo,
     )
