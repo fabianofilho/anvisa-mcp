@@ -13,7 +13,7 @@ class Config(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    qwen_endpoint: str = Field(default="http://127.0.0.1:11434/v1")
+    qwen_endpoint: str = Field(default="http://127.0.0.1:8080/v1")
     qwen_model: str = Field(default="local-model")
     qwen_timeout_segundos: float = Field(default=120.0)
     qwen_max_tentativas: int = Field(default=3, ge=1)
