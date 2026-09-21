@@ -16,6 +16,7 @@ from anvisa_mcp.mcp_server.tools.medicamentos import consultar_status_medicament
 from anvisa_mcp.mcp_server.tools.samd import buscar_samd_recentes
 from anvisa_mcp.store.db import conectar
 from anvisa_mcp.store.queries import ausentes_na_ultima_coleta
+from anvisa_mcp.store.troca import BaseSuspeita, caminho_em_construcao, publicar
 
 app = typer.Typer(help="Administração do anvisa-mcp", no_args_is_help=True)
 
@@ -41,13 +42,28 @@ def fontes() -> None:
 @app.command()
 def sync(
     fonte: str = typer.Option("todas", help="medicamentos, dispositivos_medicos ou todas"),
+    publicar_ao_fim: bool = typer.Option(
+        False,
+        "--publicar",
+        help="Constrói a base ao lado e troca por rename no fim (modo connector)",
+    ),
+    forcar: bool = typer.Option(False, "--forcar", help="Publica mesmo se a base nova encolheu"),
 ) -> None:
-    """Roda o sync dos datasets públicos agora."""
+    """Roda o sync dos datasets públicos agora.
+
+    Com ``--publicar``, escreve numa base nova e só troca pela servida no fim.
+    É o modo para quando há um servidor HTTP lendo o arquivo: o DuckDB recusa
+    abrir para escrita enquanto houver leitor.
+    """
     config = carregar_config()
     _configurar_log(config.log_level)
 
+    alvo = caminho_em_construcao(config.duckdb_path) if publicar_ao_fim else config.duckdb_path
+    if publicar_ao_fim and alvo.exists():
+        alvo.unlink()
+
     async def rodar() -> None:
-        with conectar(config.duckdb_path) as conexao:
+        with conectar(alvo) as conexao:
             tarefas = {
                 "medicamentos": sync_medicamentos,
                 "dispositivos_medicos": sync_dispositivos_medicos,
@@ -61,6 +77,14 @@ def sync(
                     )
                 except FonteNaoConfigurada as erro:
                     typer.secho(f"{nome}: {erro}", fg=typer.colors.YELLOW)
+
+        if publicar_ao_fim:
+            try:
+                publicado = publicar(config.duckdb_path, forcar=forcar)
+            except BaseSuspeita as erro:
+                typer.secho(f"publicação recusada: {erro}", fg=typer.colors.RED)
+                raise typer.Exit(code=1) from erro
+            typer.secho(f"base publicada: {publicado}", fg=typer.colors.GREEN)
 
     asyncio.run(rodar())
 

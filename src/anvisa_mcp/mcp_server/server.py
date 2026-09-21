@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import logging
 import sys
+from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
 from anvisa_mcp.config import carregar_config
+from anvisa_mcp.mcp_server.limite import LimitadorPorOrigem, origem_da_requisicao
 from anvisa_mcp.mcp_server.tools.medicamentos import (
     RespostaMedicamentos,
 )
@@ -77,20 +79,84 @@ async def buscar_samd_recentes(
         qwen_model=config.qwen_model,
         timeout_segundos=config.qwen_timeout_segundos,
         max_tentativas=config.qwen_max_tentativas,
+        # No modo connector o servidor nao chama o LLM: serve o cache.
+        permitir_llm=not config.modo_connector,
     )
 
 
+def _com_limite(app: Any, limite_por_minuto: int, limite_global: int) -> Any:
+    """Embrulha o app ASGI com o teto de requisicoes por origem.
+
+    O `run()` do SDK nao aceita middleware, entao o app e construido por
+    `streamable_http_app()`, embrulhado aqui e servido por uvicorn.
+    """
+    limitador = LimitadorPorOrigem(limite_por_minuto, limite_global)
+
+    async def middleware(scope: Any, receive: Any, send: Any) -> None:
+        if scope.get("type") != "http":
+            await app(scope, receive, send)
+            return
+        origem = origem_da_requisicao(scope)
+        if not limitador.permitir(origem):
+            logger.warning("limite %s excedido (origem %s)", limitador.motivo_ultima_recusa, origem)
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 429,
+                    "headers": [
+                        (b"content-type", b"application/json"),
+                        (b"retry-after", b"60"),
+                    ],
+                }
+            )
+            await send(
+                {
+                    "type": "http.response.body",
+                    "body": b'{"erro":"limite de requisicoes excedido; tente em 1 minuto"}',
+                }
+            )
+            return
+        await app(scope, receive, send)
+
+    return middleware
+
+
 def main() -> None:
-    """Sobe o servidor MCP no stdio. Logs vão para stderr: stdout é o transporte."""
+    """Sobe o servidor MCP. Stdio por padrao; HTTP no modo connector."""
     config = carregar_config()
     logging.basicConfig(
         level=getattr(logging, config.log_level.upper(), logging.INFO),
         stream=sys.stderr,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    logger.info("anvisa-mcp subindo (LLM em %s)", config.qwen_endpoint)
-    mcp.run(transport="stdio")
 
+    if config.transporte == "stdio":
+        logger.info("anvisa-mcp subindo em stdio (LLM em %s)", config.qwen_endpoint)
+        mcp.run(transport="stdio")
+        return
 
-if __name__ == "__main__":
-    main()
+    # Modo connector: somente leitura, sem LLM, e o sync roda fora deste
+    # processo publicando a base por troca atomica.
+    import uvicorn
+
+    app = _com_limite(
+        mcp.streamable_http_app(
+            streamable_http_path=config.http_path,
+            stateless_http=config.http_stateless,
+            host=config.http_host,
+        ),
+        config.http_limite_por_minuto,
+        config.http_limite_global_por_minuto,
+    )
+    logger.info(
+        "anvisa-mcp em http://%s:%d%s (stateless=%s, sem LLM, limite %d/min por origem "
+        "e %d/min global, base=%s)",
+        config.http_host,
+        config.http_porta,
+        config.http_path,
+        config.http_stateless,
+        config.http_limite_por_minuto,
+        config.http_limite_global_por_minuto,
+        config.duckdb_path,
+    )
+    uvicorn.run(app, host=config.http_host, port=config.http_porta, log_level="warning")

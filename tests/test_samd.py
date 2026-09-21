@@ -360,4 +360,4 @@ async def test_negativo_de_baixa_confianca_vira_indeterminado(caminho_db: str) -
     )
     assert resposta.total == 0
     assert resposta.indeterminados == 1
-    assert resposta.aviso is not None and "não permitiu decidir" in resposta.aviso
+    assert resposta.aviso is not None and "não significa que não usem IA" in resposta.aviso

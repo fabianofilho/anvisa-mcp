@@ -16,3 +16,4 @@ venv/
 .env
 data/
 !src/anvisa_mcp/data/
+.tmp/

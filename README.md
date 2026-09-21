@@ -128,6 +128,81 @@ Dispositivos Classe III/IV registrados na janela, classificados quanto a uso de 
 A classificação fica cacheada no DuckDB: o mesmo registro não é reclassificado a cada
 chamada (13,4s na primeira vez, instantâneo depois).
 
+## Modo connector (servidor HTTP)
+
+Por padrão o servidor fala **stdio**: o cliente sobe o processo na máquina de quem usa.
+Com `TRANSPORTE=streamable-http`, ele vira um servidor alcançável pela rede, que é o que
+o Claude aceita como custom connector.
+
+```bash
+TRANSPORTE=streamable-http HTTP_HOST=0.0.0.0 HTTP_PORTA=8000 uv run anvisa-mcp
+```
+
+| Variável | Padrão | Observação |
+| --- | --- | --- |
+| `TRANSPORTE` | `stdio` | `streamable-http` liga o modo connector |
+| `HTTP_HOST` / `HTTP_PORTA` / `HTTP_PATH` | `127.0.0.1` / `8000` / `/mcp` | |
+| `HTTP_STATELESS` | `true` | cada requisição independente; escala melhor |
+| `HTTP_LIMITE_GLOBAL_POR_MINUTO` | `1200` | o teto que protege a máquina |
+| `HTTP_LIMITE_POR_MINUTO` | `600` | por origem, contra chamada direta |
+
+**Por que dois limites.** Quando o Claude chama um connector remoto, as requisições chegam
+dos **IPs da Anthropic**, não do usuário final. Limitar só por IP colocaria todos os
+usuários no mesmo balde: ou derruba todo mundo junto, ou não protege nada. O teto global é
+o que vale para esse tráfego; o por origem serve contra quem chama o servidor direto.
+
+### No modo connector o servidor não chama o LLM
+
+`buscar_samd_recentes` normalmente pede a um LLM local que leia o texto do registro e
+julgue se o produto usa IA. Num connector isso não se sustenta: cada usuário pagaria a
+espera de uma fila de GPU compartilhada, e a classificação grava no DuckDB, que recusa
+abrir para escrita enquanto houver leitor.
+
+Então, com `TRANSPORTE=streamable-http`, o servidor **serve só o que já está no cache** e
+diz isso na resposta. Quem classifica é a coleta, fora do processo do servidor:
+
+```bash
+uv run anvisa-cli sync --publicar   # coleta, classifica e publica
+```
+
+Cada item traz de onde veio o veredito, em `origem_classificacao`:
+
+| Valor | Significado |
+| --- | --- |
+| `llm` | classificado agora (só acontece em stdio) |
+| `cache` | classificado numa coleta anterior |
+| `nao_classificado` | connector sem o item no cache: **indeterminado**, não é "não usa IA" |
+| `indisponivel` | LLM configurado mas fora do ar |
+
+A diferença importa. Um registro que ninguém classificou ainda não é um registro sem IA, e
+a resposta nunca conta os dois juntos.
+
+### A base não vai junto, e o sync roda fora
+
+O DuckDB recusa abrir para escrita enquanto houver um leitor, e no modo connector o
+servidor abre a base a cada requisição. Escrever direto no arquivo servido falharia sempre
+que a coleta caísse em cima de uma consulta.
+
+Por isso o sync usa `--publicar`: constrói a base ao lado e troca por `os.replace`, que é
+atômico no POSIX. Quem já abriu continua no arquivo antigo até fechar, o tempo de uma
+requisição; quem abrir depois pega o novo.
+
+```bash
+uv run anvisa-cli sync --publicar          # constrói ao lado e troca no fim
+uv run anvisa-cli sync --publicar --forcar # aceita base menor que a servida
+```
+
+**A publicação é recusada quando a base nova encolhe mais de 10%.** Coleta interrompida por
+rede ruim, dataset publicado truncado ou um teste com filtro produzem uma base pequena e
+aparentemente válida, e sem essa checagem ela substituiria a boa em silêncio, para todo
+mundo que consulta. A versão trocada fica como `.anterior`, e `store.troca.reverter()`
+volta atrás.
+
+O repositório **não traz a base pronta**. Quem clona roda o próprio sync; quem hospeda um
+connector serve a sua. Os dados vêm do portal de dados abertos da Anvisa, que é público,
+então qualquer pessoa consegue montar a sua, mas a base construída e classificada é
+trabalho de organização, não faz parte do código.
+
 ## Limitações conhecidas
 
 **O registro de dispositivos não tem campo de descrição.** O texto que alimenta a

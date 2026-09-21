@@ -27,7 +27,7 @@ from anvisa_mcp.store.queries import (
 logger = logging.getLogger(__name__)
 
 Fonte = Literal["duckdb", "mock"]
-OrigemClassificacao = Literal["llm", "cache", "indisponivel"]
+OrigemClassificacao = Literal["llm", "cache", "indisponivel", "nao_classificado"]
 
 
 class ClassificacaoIA(BaseModel):
@@ -133,6 +133,12 @@ AVISO_HEURISTICA = (
     "A Anvisa não publica campo estruturado de uso de IA. A classificação abaixo é "
     "heurística, feita por LLM lendo o texto do registro: confira a justificativa."
 )
+AVISO_SEM_LLM = (
+    "Este servidor não classifica sob demanda: devolve o que já está no cache, construído "
+    "na coleta. Registros com origem='nao_classificado' não foram avaliados — não são "
+    "'sem IA', são 'não se sabe'."
+)
+
 AVISO_FILTRO_SOFTWARE = (
     "Só foram analisados registros cujo texto sugere software (por palavra-chave). "
     "Um produto que use IA sem mencionar esses termos não aparece aqui. "
@@ -148,6 +154,7 @@ async def _classificar(
     modelo: str,
     usar_cache: bool,
     a_gravar: list[dict[str, Any]] | None = None,
+    permitir_llm: bool = True,
 ) -> ClassificacaoIA:
     """Classificação de um registro: cache primeiro, LLM depois, erro claro por último."""
     numero = registro["numero_registro"]
@@ -163,6 +170,15 @@ async def _classificar(
             )
 
     if cliente is None:
+        if not permitir_llm:
+            return ClassificacaoIA(
+                usa_ia=None,
+                justificativa=(
+                    "Servidor em modo somente leitura: classifica apenas o que já está "
+                    "em cache. Este registro ainda não foi avaliado."
+                ),
+                origem="nao_classificado",
+            )
         return ClassificacaoIA(
             usa_ia=None,
             justificativa="LLM local indisponível: registro não classificado.",
@@ -227,6 +243,7 @@ async def buscar_samd_recentes(
     apenas_software: bool = True,
     *,
     caminho_db: str,
+    permitir_llm: bool = True,
     qwen_endpoint: str,
     qwen_model: str,
     timeout_segundos: float = 120.0,
@@ -266,6 +283,7 @@ async def buscar_samd_recentes(
                     dias,
                     apenas_com_ia,
                     fonte,
+                    permitir_llm=permitir_llm,
                     qwen_endpoint=qwen_endpoint,
                     qwen_model=qwen_model,
                     timeout_segundos=timeout_segundos,
@@ -297,6 +315,7 @@ async def buscar_samd_recentes(
         dias,
         apenas_com_ia,
         "mock",
+        permitir_llm=permitir_llm,
         qwen_endpoint=qwen_endpoint,
         qwen_model=qwen_model,
         timeout_segundos=timeout_segundos,
@@ -306,6 +325,59 @@ async def buscar_samd_recentes(
     return mock
 
 
+def _finalizar(
+    itens: list[DispositivoSaMD],
+    dias: int,
+    apenas_com_ia: bool,
+    fonte: Fonte,
+    aviso: str,
+    pendentes: list[dict[str, Any]] | None = None,
+) -> tuple[RespostaSaMD, list[dict[str, Any]]]:
+    """Filtra, conta os indeterminados e monta a resposta.
+
+    Compartilhado pelos dois caminhos — com LLM e no modo connector — para que
+    a contagem de indeterminados e os avisos sejam os mesmos nos dois.
+    """
+    indeterminados = 0
+    if apenas_com_ia:
+        # Um "não" com confiança baixa quer dizer "o texto não deixa saber". Sumir
+        # com esses em silêncio esconderia justamente os casos duvidosos, então
+        # eles saem da lista mas entram na contagem. Vale também para o que nem
+        # chegou a ser classificado.
+        indeterminados = sum(
+            1
+            for item in itens
+            if not item.classificacao.usa_ia
+            and (
+                item.classificacao.origem in ("nao_classificado", "indisponivel")
+                or (item.classificacao.confianca or 0.0) < LIMIAR_INDETERMINADO
+            )
+        )
+        itens = [item for item in itens if item.classificacao.usa_ia]
+
+    if any(not item.visto_na_ultima_coleta for item in itens):
+        aviso = f"{aviso} {AVISO_AUSENTE_NA_FONTE}"
+
+    return (
+        RespostaSaMD(
+            dias=dias,
+            apenas_com_ia=apenas_com_ia,
+            fonte=fonte,
+            total=len(itens),
+            resultados=itens,
+            indeterminados=indeterminados,
+            aviso=(
+                f"{aviso} {indeterminados} registro(s) ficaram de fora por confiança "
+                "abaixo de 0,5 ou por não terem sido classificados: isso não "
+                "significa que não usem IA."
+                if indeterminados
+                else aviso
+            ),
+        ),
+        pendentes or [],
+    )
+
+
 async def _montar_resposta(
     conexao: Any,
     registros: list[dict[str, Any]],
@@ -313,6 +385,7 @@ async def _montar_resposta(
     apenas_com_ia: bool,
     fonte: Fonte,
     *,
+    permitir_llm: bool = True,
     qwen_endpoint: str,
     qwen_model: str,
     timeout_segundos: float,
@@ -320,6 +393,32 @@ async def _montar_resposta(
     aviso: str,
 ) -> tuple[RespostaSaMD, list[dict[str, Any]]]:
     pendentes: list[dict[str, Any]] = []
+    if not permitir_llm:
+        # Modo connector: nenhuma chamada ao LLM e nenhuma escrita na base. Quem
+        # hospeda nao paga inferencia por todo mundo, e o DuckDB nao aceita
+        # escritor enquanto o servidor le.
+        itens = [
+            DispositivoSaMD(
+                numero_registro=registro["numero_registro"],
+                nome_produto=registro["nome_produto"],
+                empresa_detentora=registro.get("empresa_detentora"),
+                classe_risco=registro.get("classe_risco"),
+                situacao=registro.get("situacao"),
+                data_registro=registro.get("data_registro"),
+                visto_na_ultima_coleta=bool(registro.get("visto_na_ultima_coleta", True)),
+                classificacao=await _classificar(
+                    conexao,
+                    None,
+                    registro,
+                    modelo=qwen_model,
+                    usar_cache=fonte == "duckdb",
+                    permitir_llm=False,
+                ),
+            )
+            for registro in registros
+        ]
+        return _finalizar(itens, dias, apenas_com_ia, fonte, f"{aviso} {AVISO_SEM_LLM}")
+
     async with QwenClient(
         qwen_endpoint,
         qwen_model,
@@ -343,44 +442,11 @@ async def _montar_resposta(
                     registro,
                     modelo=qwen_model,
                     usar_cache=fonte == "duckdb",
-                    a_gravar=pendentes if fonte == "duckdb" else None,
+                    a_gravar=pendentes if fonte == "duckdb" and permitir_llm else None,
+                    permitir_llm=permitir_llm,
                 ),
             )
             for registro in registros
         ]
 
-    indeterminados = 0
-    if apenas_com_ia:
-        # Um "não" com confiança baixa quer dizer "o texto não deixa saber". Sumir
-        # com esses em silêncio esconderia justamente os casos duvidosos, então
-        # eles saem da lista mas entram na contagem.
-        indeterminados = sum(
-            1
-            for item in itens
-            if not item.classificacao.usa_ia
-            and (item.classificacao.confianca or 0.0) < LIMIAR_INDETERMINADO
-        )
-        itens = [item for item in itens if item.classificacao.usa_ia]
-
-    ausentes_na_fonte = sum(1 for item in itens if not item.visto_na_ultima_coleta)
-    if ausentes_na_fonte:
-        aviso = f"{aviso} {AVISO_AUSENTE_NA_FONTE}"
-
-    return (
-        RespostaSaMD(
-            dias=dias,
-            apenas_com_ia=apenas_com_ia,
-            fonte=fonte,
-            total=len(itens),
-            resultados=itens,
-            indeterminados=indeterminados,
-            aviso=(
-                f"{aviso} {indeterminados} registro(s) ficaram de fora por confiança "
-                "abaixo de 0,5: o texto do registro não permitiu decidir, o que não "
-                "significa que não usem IA."
-                if indeterminados
-                else aviso
-            ),
-        ),
-        pendentes,
-    )
+    return _finalizar(itens, dias, apenas_com_ia, fonte, aviso, pendentes)
