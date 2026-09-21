@@ -19,7 +19,18 @@ from anvisa_mcp.data.sources import DISPOSITIVOS_MEDICOS, MEDICAMENTOS, FonteDad
 
 logger = logging.getLogger(__name__)
 
+# Espalha o disparo dentro de meia hora. Num projeto publico isso nao e
+# detalhe: horario fixo resolve a concorrencia na maquina de quem roda, mas
+# cria concorrencia do outro lado se varias pessoas usarem o padrao do
+# .env.example e baterem no mesmo servidor no mesmo minuto.
+JITTER_SEGUNDOS = 1800
+
 TIMEOUT_DOWNLOAD = 300.0
+
+# Identifica o projeto para quem administra o portal de dados abertos, com link
+# para o repositorio. Antes daqui o coletor usava o User-Agent default do httpx,
+# anonimo — ma cidadania para um projeto publico que consulta servidor do governo.
+USER_AGENT = "anvisa-mcp/0.1 (+https://github.com/fabianofilho/anvisa-mcp)"
 
 
 @dataclass(frozen=True)
@@ -48,7 +59,9 @@ async def _baixar_csv(
     a decodificação é explícita: deixar o httpx adivinhar produz acento quebrado.
     """
     proprio = client is None
-    http = client or httpx.AsyncClient(timeout=TIMEOUT_DOWNLOAD, follow_redirects=True)
+    http = client or httpx.AsyncClient(
+        timeout=TIMEOUT_DOWNLOAD, follow_redirects=True, headers={"User-Agent": USER_AGENT}
+    )
     try:
         resposta = await http.get(url)
         resposta.raise_for_status()
@@ -173,7 +186,8 @@ def agendar_syncs(caminho_db: str, hora_local: str) -> Any:
 
     hora, minuto = (int(parte) for parte in hora_local.split(":"))
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(tarefa, "cron", hour=hora, minute=minuto)
+    # jitter: ver JITTER_SEGUNDOS no topo do modulo
+    scheduler.add_job(tarefa, "cron", hour=hora, minute=minuto, jitter=JITTER_SEGUNDOS)
     scheduler.start()
     logger.info("syncs agendados diariamente às %s", hora_local)
     return scheduler
