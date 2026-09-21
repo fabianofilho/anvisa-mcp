@@ -147,6 +147,14 @@ confiança alta mesmo quando o texto não sustenta. O prompt fixa faixas de conf
 situação, o que melhorou bastante (reagentes saem com 0,9, nomes ambíguos com 0,2), mas
 não resolve por completo.
 
+**A base guarda o último estado visto, e não remove nada.** O sync é upsert: um registro
+que a Anvisa tira da publicação continua na base com a situação da última vez que apareceu.
+Registro que sai da publicação costuma ter sido cancelado, então cada resultado traz
+`visto_na_ultima_coleta`, e a resposta ganha um aviso quando algum vier `false`. Aconteceu
+de verdade: entre 20 e 21/09/2026, **13 dispositivos sumiram** do arquivo publicado.
+
+`anvisa-cli schema` mostra a contagem, e o sync loga um aviso quando há registros assim.
+
 **Medicamentos sem número de registro não entram.** O arquivo inclui produtos notificados
 (baixo risco), que não têm registro — e a pergunta "qual o status do registro" não se
 aplica a eles.

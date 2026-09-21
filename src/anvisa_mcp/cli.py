@@ -15,6 +15,7 @@ from anvisa_mcp.llm.qwen_client import QwenClient
 from anvisa_mcp.mcp_server.tools.medicamentos import consultar_status_medicamento
 from anvisa_mcp.mcp_server.tools.samd import buscar_samd_recentes
 from anvisa_mcp.store.db import conectar
+from anvisa_mcp.store.queries import ausentes_na_ultima_coleta
 
 app = typer.Typer(help="Administração do anvisa-mcp", no_args_is_help=True)
 
@@ -120,6 +121,12 @@ def schema() -> None:
         for (tabela,) in tabelas:
             linha = conexao.execute(f"SELECT count(*) FROM {tabela}").fetchone()
             contagens[tabela] = int(linha[0]) if linha else 0
+        # Quem nao veio na ultima coleta continua na base: o upsert nao remove.
+        for tabela in ("medicamentos", "dispositivos_medicos"):
+            if tabela in contagens:
+                contagens[f"{tabela}_ausentes_na_ultima_coleta"] = ausentes_na_ultima_coleta(
+                    conexao, tabela
+                )
     typer.echo(json.dumps(contagens, indent=2))
 
 

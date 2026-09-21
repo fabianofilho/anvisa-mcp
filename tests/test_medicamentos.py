@@ -110,3 +110,52 @@ def test_ativos_vem_antes_dos_inativos(db: duckdb.DuckDBPyConnection) -> None:
         "NOME BEM MAIS LONGO",
         "AA",
     ]
+
+
+def test_registro_ausente_da_fonte_vem_marcado(db: duckdb.DuckDBPyConnection) -> None:
+    """O upsert não remove: quem sumiu da publicação não pode passar por válido."""
+    _inserir(db, numero_registro="1", nome_produto="SUMIU", situacao="Ativo")
+    # Simula uma coleta posterior em que só o outro registro apareceu.
+    db.execute("UPDATE medicamentos SET atualizado_em = now() - INTERVAL 2 DAY")
+    _inserir(db, numero_registro="2", nome_produto="VEIO", situacao="Ativo")
+
+    sumiu = buscar_medicamentos(db, "sumiu")
+    veio = buscar_medicamentos(db, "veio")
+    assert sumiu[0]["visto_na_ultima_coleta"] is False
+    assert veio[0]["visto_na_ultima_coleta"] is True
+
+
+def test_conta_ausentes(db: duckdb.DuckDBPyConnection) -> None:
+    from anvisa_mcp.store.queries import ausentes_na_ultima_coleta
+
+    _inserir(db, numero_registro="1", nome_produto="ANTIGO")
+    db.execute("UPDATE medicamentos SET atualizado_em = now() - INTERVAL 2 DAY")
+    _inserir(db, numero_registro="2", nome_produto="NOVO")
+    assert ausentes_na_ultima_coleta(db, "medicamentos") == 1
+
+
+async def test_aviso_quando_ha_registro_ausente(caminho_db: str) -> None:
+    """Quem consulta precisa saber que a situação pode estar desatualizada."""
+    from anvisa_mcp.store.db import conectar
+
+    with conectar(caminho_db) as conexao:
+        _inserir(conexao, numero_registro="1", nome_produto="DIPIRONA SUMIU", situacao="Ativo")
+        conexao.execute("UPDATE medicamentos SET atualizado_em = now() - INTERVAL 2 DAY")
+        _inserir(conexao, numero_registro="2", nome_produto="DIPIRONA ATUAL", situacao="Ativo")
+
+    resposta = await consultar_status_medicamento("dipirona", caminho_db=caminho_db)
+    assert resposta.fonte == "duckdb"
+    assert resposta.aviso is not None and "NÃO apareceram" in resposta.aviso
+    ausentes = [r for r in resposta.resultados if not r.visto_na_ultima_coleta]
+    assert [r.nome_produto for r in ausentes] == ["DIPIRONA SUMIU"]
+
+
+async def test_sem_aviso_quando_todos_vieram(caminho_db: str) -> None:
+    from anvisa_mcp.store.db import conectar
+
+    with conectar(caminho_db) as conexao:
+        _inserir(conexao, numero_registro="1", nome_produto="DIPIRONA", situacao="Ativo")
+
+    resposta = await consultar_status_medicamento("dipirona", caminho_db=caminho_db)
+    assert resposta.aviso is None
+    assert all(r.visto_na_ultima_coleta for r in resposta.resultados)

@@ -52,6 +52,13 @@ class DispositivoSaMD(BaseModel):
     classe_risco: str | None = None
     situacao: str | None = None
     data_registro: date | None = None
+    visto_na_ultima_coleta: bool = Field(
+        default=True,
+        description=(
+            "False quando o registro não apareceu no arquivo da última coleta — "
+            "a situação mostrada pode estar desatualizada"
+        ),
+    )
     classificacao: ClassificacaoIA
 
 
@@ -105,6 +112,13 @@ _MOCK: list[dict[str, Any]] = [
         ),
     },
 ]
+
+AVISO_AUSENTE_NA_FONTE = (
+    "Um ou mais registros abaixo NÃO apareceram na última publicação da Anvisa "
+    "(visto_na_ultima_coleta=false). A base guarda o que foi visto por último e não "
+    "remove nada, então a situação mostrada pode estar desatualizada — registro que sai "
+    "da publicação costuma ter sido cancelado. Confira no portal oficial antes de usar."
+)
 
 AVISO_MOCK = (
     "Dados de exemplo: a base local ainda não foi sincronizada com a Anvisa. "
@@ -322,6 +336,7 @@ async def _montar_resposta(
                 classe_risco=registro.get("classe_risco"),
                 situacao=registro.get("situacao"),
                 data_registro=registro.get("data_registro"),
+                visto_na_ultima_coleta=bool(registro.get("visto_na_ultima_coleta", True)),
                 classificacao=await _classificar(
                     conexao,
                     ativo,
@@ -346,6 +361,10 @@ async def _montar_resposta(
             and (item.classificacao.confianca or 0.0) < LIMIAR_INDETERMINADO
         )
         itens = [item for item in itens if item.classificacao.usa_ia]
+
+    ausentes_na_fonte = sum(1 for item in itens if not item.visto_na_ultima_coleta)
+    if ausentes_na_fonte:
+        aviso = f"{aviso} {AVISO_AUSENTE_NA_FONTE}"
 
     return (
         RespostaSaMD(

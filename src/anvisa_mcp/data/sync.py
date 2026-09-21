@@ -16,6 +16,7 @@ import duckdb
 import httpx
 
 from anvisa_mcp.data.sources import DISPOSITIVOS_MEDICOS, MEDICAMENTOS, FonteDados
+from anvisa_mcp.store.queries import ausentes_na_ultima_coleta
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +138,16 @@ async def _sync_fonte(
     )
     registros = fonte.parser(linhas)
     resultado = _gravar(conexao, fonte.chave, registros)
+    ausentes = ausentes_na_ultima_coleta(conexao, fonte.chave)
+    if ausentes:
+        # Nao e erro: e a Anvisa tendo removido registros da publicacao. Mas a
+        # base guarda o ultimo estado visto, entao precisa ficar no log.
+        logger.warning(
+            "%s: %d registro(s) da base nao vieram neste arquivo; "
+            "seguem marcados com visto_na_ultima_coleta=false",
+            fonte.chave,
+            ausentes,
+        )
     logger.info(
         "%s: %d novos, %d atualizados (%d linhas no arquivo)",
         fonte.chave,

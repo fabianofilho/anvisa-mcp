@@ -31,6 +31,13 @@ class RegistroMedicamento(BaseModel):
     )
     data_situacao: date | None = None
     categoria: str | None = None
+    visto_na_ultima_coleta: bool = Field(
+        default=True,
+        description=(
+            "False quando o registro não apareceu no arquivo da última coleta — "
+            "a situação mostrada pode estar desatualizada"
+        ),
+    )
 
 
 class RespostaMedicamentos(BaseModel):
@@ -65,6 +72,13 @@ _MOCK: list[dict[str, Any]] = [
         "categoria": "similar",
     },
 ]
+
+AVISO_AUSENTE_NA_FONTE = (
+    "Um ou mais registros abaixo NÃO apareceram na última publicação da Anvisa "
+    "(visto_na_ultima_coleta=false). A base guarda o que foi visto por último e não "
+    "remove nada, então a situação mostrada pode estar desatualizada — registro que sai "
+    "da publicação costuma ter sido cancelado. Confira no portal oficial antes de usar."
+)
 
 AVISO_MOCK = (
     "Dados de exemplo: a base local ainda não foi sincronizada com a Anvisa. "
@@ -126,11 +140,14 @@ async def consultar_status_medicamento(
         motivo = AVISO_BASE_TRAVADA
 
     if linhas:
+        resultados = [RegistroMedicamento.model_validate(linha) for linha in linhas]
+        ausentes = sum(1 for r in resultados if not r.visto_na_ultima_coleta)
         return RespostaMedicamentos(
             termo_consultado=termo,
             fonte="duckdb",
-            total=len(linhas),
-            resultados=[RegistroMedicamento.model_validate(linha) for linha in linhas],
+            total=len(resultados),
+            resultados=resultados,
+            aviso=AVISO_AUSENTE_NA_FONTE if ausentes else None,
         )
 
     mock = _filtrar_mock(termo)

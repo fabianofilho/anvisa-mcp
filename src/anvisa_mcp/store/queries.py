@@ -8,6 +8,22 @@ from typing import Any
 import duckdb
 
 
+def _visto_na_ultima_coleta(tabela: str) -> str:
+    """Expressão SQL: esta linha apareceu no arquivo da coleta mais recente?
+
+    O upsert é o único jeito de uma linha ganhar ``atualizado_em = now()``, e o
+    ``now()`` do DuckDB é constante dentro da transação — então todas as linhas
+    presentes no arquivo compartilham o mesmo timestamp, e o máximo da tabela é
+    o horário da última coleta.
+
+    Isso importa porque o upsert **não remove**: um registro que a Anvisa tirou
+    da publicação continua na base com a situação antiga. Sem esta marca, a tool
+    devolveria um registro possivelmente cancelado como se ainda valesse — que é
+    o pior erro que ela pode cometer.
+    """
+    return f"(atualizado_em >= (SELECT max(atualizado_em) FROM {tabela})) AS visto_na_ultima_coleta"
+
+
 def buscar_medicamentos(
     conexao: duckdb.DuckDBPyConnection,
     termo: str,
@@ -24,9 +40,10 @@ def buscar_medicamentos(
     padrao = f"%{termo.strip()}%"
     return _para_dicts(
         conexao.execute(
-            """
+            f"""
             SELECT numero_registro, nome_produto, principio_ativo, empresa_detentora,
-                   situacao, data_situacao, categoria
+                   situacao, data_situacao, categoria,
+                   {_visto_na_ultima_coleta("medicamentos")}
             FROM medicamentos
             WHERE strip_accents(lower(nome_produto)) LIKE strip_accents(lower(?))
                OR strip_accents(lower(coalesce(principio_ativo, ''))) LIKE strip_accents(lower(?))
@@ -91,7 +108,8 @@ def dispositivos_no_periodo(
         conexao.execute(
             f"""
             SELECT numero_registro, nome_produto, empresa_detentora, classe_risco,
-                   situacao, data_registro, descricao
+                   situacao, data_registro, descricao,
+                   {_visto_na_ultima_coleta("dispositivos_medicos")}
             FROM dispositivos_medicos
             WHERE data_registro >= ?
               AND classe_risco IN ({marcadores})
@@ -154,3 +172,17 @@ def gravar_classificacao(
 def _para_dicts(resultado: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
     colunas = [d[0] for d in resultado.description or []]
     return [dict(zip(colunas, linha, strict=True)) for linha in resultado.fetchall()]
+
+
+def ausentes_na_ultima_coleta(conexao: duckdb.DuckDBPyConnection, tabela: str) -> int:
+    """Quantos registros da base não apareceram no arquivo da última coleta.
+
+    Um número diferente de zero não é erro: é a Anvisa tendo removido registros
+    da publicação, provavelmente por cancelamento. Mas é informação que precisa
+    chegar a quem consulta.
+    """
+    linha = conexao.execute(
+        f"SELECT count(*) FROM {tabela} "
+        f"WHERE atualizado_em < (SELECT max(atualizado_em) FROM {tabela})"
+    ).fetchone()
+    return int(linha[0]) if linha else 0
