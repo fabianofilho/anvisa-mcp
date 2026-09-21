@@ -199,15 +199,16 @@ classificações e 13 registros a menos, publicados sem um aviso. A cópia é fe
 DuckDB (`COPY FROM DATABASE`), porque um `cp` pegaria o arquivo sem o WAL pendente.
 
 ```bash
-uv run anvisa-cli sync --publicar          # constrói ao lado e troca no fim
-uv run anvisa-cli sync --publicar --forcar # aceita base menor que a servida
+uv run anvisa-cli sync --publicar --classificar  # coleta, julga os novos e troca no fim
+uv run anvisa-cli classificar --dias 365         # só enche o cache, sem recoletar
+uv run anvisa-cli sync --publicar --forcar       # aceita base menor que a servida
 ```
 
-**A publicação é recusada quando a base nova encolhe mais de 10%.** Coleta interrompida por
-rede ruim, dataset publicado truncado ou um teste com filtro produzem uma base pequena e
-aparentemente válida, e sem essa checagem ela substituiria a boa em silêncio, para todo
-mundo que consulta. A versão trocada fica como `.anterior`, e `store.troca.reverter()`
-volta atrás.
+**A publicação é recusada quando a base nova encolhe mais de 10%.** Com a cópia acima, uma
+coleta interrompida já não produz base pequena: ela só deixa de atualizar. A checagem fica
+como rede de segurança para o que a cópia não cobre, como um clone que falhou pela metade
+ou uma remoção em massa vinda da fonte. A versão trocada fica como `.anterior`, e
+`store.troca.reverter()` volta atrás.
 
 O repositório **não traz a base pronta**. Quem clona roda o próprio sync; quem hospeda um
 connector serve a sua. Os dados vêm do portal de dados abertos da Anvisa, que é público,
