@@ -68,7 +68,7 @@ def test_situacao_caducada_e_preservada(db: duckdb.DuckDBPyConnection) -> None:
 
 
 async def test_base_vazia_cai_para_mock_marcado(caminho_db: str) -> None:
-    """Sem sync, responde mock — mas marcado como tal, com aviso."""
+    """Sem sync, responde mock, mas marcado como tal, com aviso."""
     resposta = await consultar_status_medicamento("dipirona", caminho_db=caminho_db)
     assert resposta.fonte == "mock"
     assert resposta.aviso is not None

@@ -12,13 +12,13 @@ def _visto_na_ultima_coleta(tabela: str) -> str:
     """Expressão SQL: esta linha apareceu no arquivo da coleta mais recente?
 
     O upsert é o único jeito de uma linha ganhar ``atualizado_em = now()``, e o
-    ``now()`` do DuckDB é constante dentro da transação — então todas as linhas
+    ``now()`` do DuckDB é constante dentro da transação, então todas as linhas
     presentes no arquivo compartilham o mesmo timestamp, e o máximo da tabela é
     o horário da última coleta.
 
     Isso importa porque o upsert **não remove**: um registro que a Anvisa tirou
     da publicação continua na base com a situação antiga. Sem esta marca, a tool
-    devolveria um registro possivelmente cancelado como se ainda valesse — que é
+    devolveria um registro possivelmente cancelado como se ainda valesse, que é
     o pior erro que ela pode cometer.
     """
     return f"(atualizado_em >= (SELECT max(atualizado_em) FROM {tabela})) AS visto_na_ultima_coleta"
@@ -59,7 +59,7 @@ def buscar_medicamentos(
 # Termos que indicam que o registro pode ser software. SaMD é raro: dos 1.832
 # registros Classe III/IV do último ano, 13 mencionam software. Sem este filtro,
 # os primeiros N por data são cânulas e parafusos, e a busca por SaMD nunca
-# alcança um candidato — gastando uma chamada de LLM em cada um deles.
+# alcança um candidato, gastando uma chamada de LLM em cada um deles.
 TERMOS_SOFTWARE = (
     "SOFTWARE",
     "ALGORITMO",

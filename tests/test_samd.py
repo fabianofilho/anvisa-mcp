@@ -328,7 +328,7 @@ async def test_aviso_conta_que_houve_filtro(caminho_db: str) -> None:
 
 @respx.mock
 async def test_negativo_de_baixa_confianca_vira_indeterminado(caminho_db: str) -> None:
-    """'Não usa IA' com confiança 0,2 quer dizer 'não dá para saber' — não some calado."""
+    """'Não usa IA' com confiança 0,2 quer dizer 'não dá para saber', não some calado."""
     with conectar(caminho_db) as conexao:
         _inserir_dispositivo(conexao, numero="8.1", nome="BoneCT", descricao="Software")
         _inserir_dispositivo(conexao, numero="8.2", nome="PARAFUSO", descricao="Software")

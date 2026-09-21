@@ -38,7 +38,7 @@ async def consultar_status_medicamento(nome_ou_principio_ativo: str) -> Resposta
     Busca por nome comercial ou princípio ativo e devolve todos os registros que
     casam, com situação (válido, caducado, em análise), número de registro, data e
     empresa detentora. Quando a base local ainda não foi sincronizada, devolve
-    dados de exemplo com fonte='mock' — nesse caso, não trate como informação
+    dados de exemplo com fonte='mock', nesse caso, não trate como informação
     regulatória.
 
     Args:

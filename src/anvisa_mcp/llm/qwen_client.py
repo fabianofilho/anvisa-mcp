@@ -1,7 +1,7 @@
 """Cliente do endpoint OpenAI-compatible exposto pelo ODS (Qwen local).
 
 Assíncrono, com timeout e retry com backoff exponencial. Quando o ODS está
-fora do ar, levanta ``QwenIndisponivel`` — nunca trava o servidor MCP.
+fora do ar, levanta ``QwenIndisponivel``, nunca trava o servidor MCP.
 """
 
 from __future__ import annotations

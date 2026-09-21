@@ -31,7 +31,7 @@ OrigemClassificacao = Literal["llm", "cache", "indisponivel", "nao_classificado"
 
 
 class ClassificacaoIA(BaseModel):
-    """Veredito heurístico sobre uso de IA — leia junto com a justificativa."""
+    """Veredito heurístico sobre uso de IA, leia junto com a justificativa."""
 
     usa_ia: bool | None = Field(description="None quando não foi possível classificar")
     confianca: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -55,7 +55,7 @@ class DispositivoSaMD(BaseModel):
     visto_na_ultima_coleta: bool = Field(
         default=True,
         description=(
-            "False quando o registro não apareceu no arquivo da última coleta — "
+            "False quando o registro não apareceu no arquivo da última coleta, "
             "a situação mostrada pode estar desatualizada"
         ),
     )
@@ -79,7 +79,7 @@ class RespostaSaMD(BaseModel):
         default=0,
         description=(
             "Quantos registros ficaram de fora por terem sido classificados como sem IA "
-            "com confiança baixa — ou seja, o texto não permitiu decidir, o que não é o "
+            "com confiança baixa, ou seja, o texto não permitiu decidir, o que não é o "
             "mesmo que não usar IA"
         ),
     )
@@ -116,7 +116,7 @@ _MOCK: list[dict[str, Any]] = [
 AVISO_AUSENTE_NA_FONTE = (
     "Um ou mais registros abaixo NÃO apareceram na última publicação da Anvisa "
     "(visto_na_ultima_coleta=false). A base guarda o que foi visto por último e não "
-    "remove nada, então a situação mostrada pode estar desatualizada — registro que sai "
+    "remove nada, então a situação mostrada pode estar desatualizada, registro que sai "
     "da publicação costuma ter sido cancelado. Confira no portal oficial antes de usar."
 )
 
@@ -125,7 +125,7 @@ AVISO_MOCK = (
     "Rode 'anvisa-cli sync'. Não use como informação regulatória."
 )
 AVISO_BASE_TRAVADA = (
-    "Dados de exemplo: a base local existe mas não pôde ser lida agora — "
+    "Dados de exemplo: a base local existe mas não pôde ser lida agora, "
     "provavelmente há um sync em andamento. Tente de novo em alguns minutos. "
     "Não use como informação regulatória."
 )
@@ -135,7 +135,7 @@ AVISO_HEURISTICA = (
 )
 AVISO_SEM_LLM = (
     "Este servidor não classifica sob demanda: devolve o que já está no cache, construído "
-    "na coleta. Registros com origem='nao_classificado' não foram avaliados — não são "
+    "na coleta. Registros com origem='nao_classificado' não foram avaliados, não são "
     "'sem IA', são 'não se sabe'."
 )
 
@@ -335,7 +335,7 @@ def _finalizar(
 ) -> tuple[RespostaSaMD, list[dict[str, Any]]]:
     """Filtra, conta os indeterminados e monta a resposta.
 
-    Compartilhado pelos dois caminhos — com LLM e no modo connector — para que
+    Compartilhado pelos dois caminhos, com LLM e no modo connector, para que
     a contagem de indeterminados e os avisos sejam os mesmos nos dois.
     """
     indeterminados = 0

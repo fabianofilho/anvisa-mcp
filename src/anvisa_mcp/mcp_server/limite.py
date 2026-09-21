@@ -5,7 +5,7 @@ uma unica sessao mal comportada consome a maquina que serve todo mundo.
 
 **Por que sao dois limites, e nao um por IP.** Quando o Claude.ai chama um
 connector remoto, as requisicoes chegam dos IPs da Anthropic, nao do usuario
-final — a propria documentacao manda liberar as faixas deles no firewall. Um
+final, a propria documentacao manda liberar as faixas deles no firewall. Um
 limite por IP colocaria todos os usuarios do Claude no mesmo balde: ou e
 restritivo e derruba todo mundo junto, ou e frouxo e nao protege nada.
 
@@ -98,7 +98,7 @@ class LimitadorPorOrigem:
 def origem_da_requisicao(scope: dict[str, Any]) -> str:
     """IP de origem, respeitando X-Forwarded-For quando ha proxy na frente.
 
-    Atras de um proxy reverso, o IP do socket e o do proxy — todos os usuarios
+    Atras de um proxy reverso, o IP do socket e o do proxy, todos os usuarios
     apareceriam como a mesma origem e um so consumiria o limite de todos.
     """
     cabecalhos: dict[str, str] = {

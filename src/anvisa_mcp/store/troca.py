@@ -1,13 +1,13 @@
 """Publicação da base por troca atômica.
 
 O DuckDB aceita um escritor por vez e recusa abrir para escrita enquanto houver
-um leitor — verificado: com uma conexão read-only aberta, o escritor leva
+um leitor, verificado: com uma conexão read-only aberta, o escritor leva
 ``ConnectionException``. No modo connector, o servidor abre a base a cada
 requisição, então uma coleta escrevendo direto no arquivo servido falharia toda
 vez que caísse em cima de uma consulta.
 
 A saída é não escrever no arquivo servido: a coleta constrói uma base nova ao
-lado e, no fim, um ``os.replace`` troca as duas. No POSIX isso é atômico — quem
+lado e, no fim, um ``os.replace`` troca as duas. No POSIX isso é atômico, quem
 já abriu o arquivo antigo continua lendo o inode antigo até fechar (o que aqui
 dura o tempo de uma requisição), e quem abrir depois pega o novo.
 """

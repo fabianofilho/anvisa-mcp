@@ -42,7 +42,7 @@ class Config(BaseSettings):
         """No modo connector o servidor nao chama o LLM nem escreve na base.
 
         Classificar sob demanda exigiria inferencia paga por quem hospeda e
-        escrita no arquivo que o proprio servidor le — e o DuckDB recusa abrir
+        escrita no arquivo que o proprio servidor le, e o DuckDB recusa abrir
         para escrita com um leitor aberto. As classificacoes vem do cache, que
         e construido na coleta, fora do servidor.
         """

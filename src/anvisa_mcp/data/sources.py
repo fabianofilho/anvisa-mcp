@@ -1,7 +1,7 @@
 """Fontes de dados abertos da Anvisa e seus parsers.
 
 As duas URLs abaixo foram confirmadas em 2026-09-20 baixando os arquivos e lendo
-o cabeçalho real — não foram deduzidas nem copiadas de documentação. O índice de
+o cabeçalho real, não foram deduzidas nem copiadas de documentação. O índice de
 diretório fica em https://dados.anvisa.gov.br/dados/ e lista o que existe hoje.
 
 Ambos os arquivos são ISO-8859-1 com separador ``;``.
@@ -22,7 +22,7 @@ BASE = "https://dados.anvisa.gov.br/dados"
 
 
 class FonteNaoConfigurada(RuntimeError):
-    """A URL do dataset não foi confirmada — não há o que baixar."""
+    """A URL do dataset não foi confirmada, não há o que baixar."""
 
 
 @dataclass(frozen=True)
@@ -133,7 +133,7 @@ def parse_dispositivos(linhas: Iterable[dict[str, str]]) -> list[dict[str, Any]]
     validade; o valor é guardado cru em ``situacao``.
 
     Este arquivo não traz descrição livre do produto. O texto que alimenta a
-    classificação de IA é montado de NOME_TECNICO, NOME_COMERCIAL e fabricante —
+    classificação de IA é montado de NOME_TECNICO, NOME_COMERCIAL e fabricante,
     é pouco, e a confiança devolvida pela classificação reflete isso.
     """
     registros: list[dict[str, Any]] = []

@@ -1,6 +1,6 @@
 """Conexão DuckDB, schema e migrations simples.
 
-Uma tabela por dataset, mais uma tabela de cache das classificações de SaMD —
+Uma tabela por dataset, mais uma tabela de cache das classificações de SaMD,
 classificar de novo o mesmo registro custa uma chamada de LLM à toa.
 """
 
@@ -72,7 +72,7 @@ def aplicar_schema(conexao: duckdb.DuckDBPyConnection) -> None:
 
 
 class BaseIndisponivel(RuntimeError):
-    """A base existe mas não pôde ser aberta agora — tipicamente um sync em curso.
+    """A base existe mas não pôde ser aberta agora, tipicamente um sync em curso.
 
     O DuckDB tranca o arquivo para um único escritor e bloqueia até os leitores
     enquanto isso. Distinguir este caso de "base vazia" importa: são respostas

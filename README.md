@@ -21,7 +21,7 @@ classificar quais deles usam IA. Roda local, contra um LLM que você mesmo hospe
 | --- | --- | --- |
 | Python | 3.12+ | runtime |
 | [uv](https://docs.astral.sh/uv/) | recente | dependências e venv |
-| Um LLM local com API OpenAI-compatible | — | classificar dispositivos (llama.cpp, Ollama, LM Studio) |
+| Um LLM local com API OpenAI-compatible | - | classificar dispositivos (llama.cpp, Ollama, LM Studio) |
 | Espaço em disco | ~500 MB | base DuckDB (~42 MB) + dependências |
 
 Não é preciso servidor de banco: o DuckDB é um arquivo.
@@ -77,7 +77,7 @@ claude mcp add anvisa --scope user \
 ### `consultar_status_medicamento(nome_ou_principio_ativo: str)`
 
 Busca por nome comercial ou princípio ativo, ignorando acento e caixa. Devolve todos os
-registros que casam — grafias variam e a ambiguidade é de quem pergunta. Registros ativos
+registros que casam, grafias variam e a ambiguidade é de quem pergunta. Registros ativos
 vêm primeiro: dois terços da base são inativos.
 
 ```json
@@ -207,12 +207,12 @@ trabalho de organização, não faz parte do código.
 
 **O registro de dispositivos não tem campo de descrição.** O texto que alimenta a
 classificação é nome técnico + nome comercial + fabricante. É pouco. Um produto cujo nome
-não diga o que ele faz será classificado com confiança baixa — e confiança baixa significa
+não diga o que ele faz será classificado com confiança baixa, e confiança baixa significa
 *"não dá para saber"*, não *"não usa IA"*. Por isso a resposta traz `indeterminados`.
 
 **`apenas_software=True` troca recall por custo.** No último ano há 1.832 registros Classe
 III/IV e só 13 mencionam software. Sem esse pré-filtro por palavra-chave, uma varredura
-dos 60 registros mais recentes encontra zero software — são cânulas, parafusos e testes
+dos 60 registros mais recentes encontra zero software, são cânulas, parafusos e testes
 rápidos. Com ele, um produto que use IA sem dizer "software", "algoritmo" ou "CAD" fica de
 fora. Use `apenas_software=False` para varrer tudo, ao custo de uma chamada de LLM por
 registro.
@@ -231,7 +231,7 @@ de verdade: entre 20 e 21/09/2026, **13 dispositivos sumiram** do arquivo public
 `anvisa-cli schema` mostra a contagem, e o sync loga um aviso quando há registros assim.
 
 **Medicamentos sem número de registro não entram.** O arquivo inclui produtos notificados
-(baixo risco), que não têm registro — e a pergunta "qual o status do registro" não se
+(baixo risco), que não têm registro, e a pergunta "qual o status do registro" não se
 aplica a eles.
 
 **As URLs dos datasets podem mudar.** Elas estão em `data/sources.py`, confirmadas em
@@ -239,7 +239,7 @@ aplica a eles.
 como reconfirmar, em vez de baixar o arquivo errado em silêncio.
 
 **O DuckDB aceita um escritor por vez.** Durante o `sync`, as tools não conseguem ler e
-caem para dados de exemplo — mas o aviso diz que a base está *ocupada*, não vazia.
+caem para dados de exemplo, mas o aviso diz que a base está *ocupada*, não vazia.
 
 ## Privacidade
 
@@ -256,7 +256,7 @@ PR, e não rode sincronizações em loop contra os dados abertos da Anvisa.
 
 ## Licença e atribuição
 
-[Apache License 2.0](LICENSE) — escolhida por tocar em regulação de dispositivo médico,
+[Apache License 2.0](LICENSE): escolhida por tocar em regulação de dispositivo médico,
 onde a cláusula explícita de patente é mais protetiva.
 
 Construído no contexto do [IA.med](https://iamed.cc).

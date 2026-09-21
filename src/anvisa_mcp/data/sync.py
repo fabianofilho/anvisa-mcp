@@ -30,7 +30,7 @@ TIMEOUT_DOWNLOAD = 300.0
 
 # Identifica o projeto para quem administra o portal de dados abertos, com link
 # para o repositorio. Antes daqui o coletor usava o User-Agent default do httpx,
-# anonimo — ma cidadania para um projeto publico que consulta servidor do governo.
+# anonimo, ma cidadania para um projeto publico que consulta servidor do governo.
 USER_AGENT = "anvisa-mcp/0.1 (+https://github.com/fabianofilho/anvisa-mcp)"
 
 

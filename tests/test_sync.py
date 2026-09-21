@@ -33,7 +33,7 @@ def test_fontes_confirmadas_apontam_para_a_anvisa() -> None:
 
 
 def test_fonte_sem_url_para_em_vez_de_chutar_endpoint() -> None:
-    """Se uma fonte perder a URL, o sync falha explicando — não inventa outra."""
+    """Se uma fonte perder a URL, o sync falha explicando, não inventa outra."""
     sem_url = replace(MEDICAMENTOS, url=None)
     with pytest.raises(FonteNaoConfigurada) as erro:
         sem_url.exigir_url()

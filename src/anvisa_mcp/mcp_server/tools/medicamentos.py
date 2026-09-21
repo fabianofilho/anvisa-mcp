@@ -34,7 +34,7 @@ class RegistroMedicamento(BaseModel):
     visto_na_ultima_coleta: bool = Field(
         default=True,
         description=(
-            "False quando o registro não apareceu no arquivo da última coleta — "
+            "False quando o registro não apareceu no arquivo da última coleta, "
             "a situação mostrada pode estar desatualizada"
         ),
     )
@@ -76,7 +76,7 @@ _MOCK: list[dict[str, Any]] = [
 AVISO_AUSENTE_NA_FONTE = (
     "Um ou mais registros abaixo NÃO apareceram na última publicação da Anvisa "
     "(visto_na_ultima_coleta=false). A base guarda o que foi visto por último e não "
-    "remove nada, então a situação mostrada pode estar desatualizada — registro que sai "
+    "remove nada, então a situação mostrada pode estar desatualizada, registro que sai "
     "da publicação costuma ter sido cancelado. Confira no portal oficial antes de usar."
 )
 
@@ -85,7 +85,7 @@ AVISO_MOCK = (
     "Rode 'anvisa-cli sync'. Não use como informação regulatória."
 )
 AVISO_BASE_TRAVADA = (
-    "Dados de exemplo: a base local existe mas não pôde ser lida agora — "
+    "Dados de exemplo: a base local existe mas não pôde ser lida agora, "
     "provavelmente há um sync em andamento. Tente de novo em alguns minutos. "
     "Não use como informação regulatória."
 )

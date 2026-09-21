@@ -57,7 +57,7 @@ async def test_modo_connector_nao_chama_o_llm(caminho_db: str) -> None:
 
 
 async def test_modo_connector_serve_o_cache(caminho_db: str) -> None:
-    """O cache é construído na coleta, fora do servidor — e é o que ele serve."""
+    """O cache é construído na coleta, fora do servidor, e é o que ele serve."""
     with conectar(caminho_db) as conexao:
         _dispositivo(conexao, "8.1", "CAD4TB")
         gravar_classificacao(
@@ -82,7 +82,7 @@ async def test_modo_connector_serve_o_cache(caminho_db: str) -> None:
 
 
 async def test_nao_classificado_nao_vira_sem_ia(caminho_db: str) -> None:
-    """'Não avaliado' é diferente de 'não usa IA' — precisa entrar em indeterminados."""
+    """'Não avaliado' é diferente de 'não usa IA', precisa entrar em indeterminados."""
     with conectar(caminho_db) as conexao:
         _dispositivo(conexao, "8.1", "DESCONHECIDO")
 
