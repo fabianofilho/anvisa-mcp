@@ -18,6 +18,8 @@ import logging
 import os
 from pathlib import Path
 
+import duckdb
+
 logger = logging.getLogger(__name__)
 
 SUFIXO_EM_CONSTRUCAO = ".novo"
@@ -115,6 +117,50 @@ def publicar(
     if wal.exists():
         wal.unlink()
     return destino
+
+
+def _citar(caminho: Path) -> str:
+    """Escapa aspas simples para interpolar o caminho no SQL do ATTACH."""
+    return str(caminho).replace("'", "''")
+
+
+def clonar_para_construcao(destino: Path | str) -> Path:
+    """Começa a base em construção como cópia da que está sendo servida.
+
+    Construir do zero perderia tudo o que não vem do arquivo de origem: o cache
+    de classificações de IA (que é caro, cada linha custou uma chamada de LLM) e
+    os registros que sumiram do dataset e que a base mantém marcados como não
+    vistos na última coleta. Medido uma vez, sem isso: 109 classificações e 13
+    registros a menos, publicados sem aviso.
+
+    A cópia é feita pelo próprio DuckDB, não pelo sistema de arquivos, porque um
+    ``cp`` pegaria o arquivo sem o WAL pendente. De quebra, sai compactada: a
+    base servida tinha 75 MB de folga acumulada por upserts sucessivos e a cópia
+    saiu com 27 MB.
+
+    Sem base servida ainda, devolve o caminho vazio: a primeira coleta constrói
+    do nada mesmo.
+    """
+    destino = Path(destino)
+    origem = caminho_em_construcao(destino)
+    for resto in (origem, Path(str(origem) + ".wal")):
+        if resto.exists():
+            resto.unlink()
+    if not destino.exists():
+        return origem
+
+    # Conexão em memória com as duas anexadas: assim os nomes são explícitos, em
+    # vez de dependerem de como o DuckDB batiza a base principal pelo nome do
+    # arquivo (que aqui termina em ".duckdb.novo").
+    conexao = duckdb.connect()
+    try:
+        conexao.execute(f"ATTACH '{_citar(destino)}' AS servida (READ_ONLY)")
+        conexao.execute(f"ATTACH '{_citar(origem)}' AS nova")
+        conexao.execute("COPY FROM DATABASE servida TO nova")
+    finally:
+        conexao.close()
+    logger.info("base em construção clonada de %s", destino.name)
+    return origem
 
 
 def reverter(destino: Path | str) -> Path:

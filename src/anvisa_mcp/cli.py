@@ -8,7 +8,7 @@ import logging
 
 import typer
 
-from anvisa_mcp.config import carregar_config
+from anvisa_mcp.config import Config, carregar_config
 from anvisa_mcp.data.sources import FONTES, FonteNaoConfigurada
 from anvisa_mcp.data.sync import sync_dispositivos_medicos, sync_medicamentos
 from anvisa_mcp.llm.qwen_client import QwenClient
@@ -16,7 +16,7 @@ from anvisa_mcp.mcp_server.tools.medicamentos import consultar_status_medicament
 from anvisa_mcp.mcp_server.tools.samd import buscar_samd_recentes
 from anvisa_mcp.store.db import conectar
 from anvisa_mcp.store.queries import ausentes_na_ultima_coleta
-from anvisa_mcp.store.troca import BaseSuspeita, caminho_em_construcao, publicar
+from anvisa_mcp.store.troca import BaseSuspeita, clonar_para_construcao, publicar
 
 app = typer.Typer(help="Administração do anvisa-mcp", no_args_is_help=True)
 
@@ -26,6 +26,34 @@ def _configurar_log(nivel: str) -> None:
         level=getattr(logging, nivel.upper(), logging.INFO),
         format="%(levelname)s %(name)s: %(message)s",
     )
+
+
+async def _classificar_pendentes(caminho_db: str, config: Config, *, dias: int) -> int:
+    """Passa o LLM nos dispositivos do período que ainda não têm veredito.
+
+    Roda pela própria tool, em vez de duplicar a heurística: ela já sabe filtrar
+    o que parece software, reaproveitar o cache e gravar o resultado. Aqui só
+    interessa o efeito colateral de encher o cache, então o retorno é a contagem.
+    """
+    antes = _total_classificacoes(caminho_db)
+    await buscar_samd_recentes(
+        dias=dias,
+        apenas_com_ia=False,
+        caminho_db=caminho_db,
+        permitir_llm=True,
+        qwen_endpoint=config.qwen_endpoint,
+        qwen_model=config.qwen_model,
+        timeout_segundos=config.qwen_timeout_segundos,
+        max_tentativas=config.qwen_max_tentativas,
+        limite=500,
+    )
+    return _total_classificacoes(caminho_db) - antes
+
+
+def _total_classificacoes(caminho_db: str) -> int:
+    with conectar(caminho_db, somente_leitura=True) as conexao:
+        linha = conexao.execute("SELECT count(*) FROM classificacoes_samd").fetchone()
+    return int(linha[0]) if linha else 0
 
 
 @app.command()
@@ -48,19 +76,29 @@ def sync(
         help="Constrói a base ao lado e troca por rename no fim (modo connector)",
     ),
     forcar: bool = typer.Option(False, "--forcar", help="Publica mesmo se a base nova encolheu"),
+    classificar_ao_fim: bool = typer.Option(
+        False,
+        "--classificar",
+        help="Classifica os dispositivos novos com o LLM antes de publicar",
+    ),
+    dias_classificacao: int = typer.Option(
+        365, help="Janela, em dias, dos dispositivos a classificar com --classificar"
+    ),
 ) -> None:
     """Roda o sync dos datasets públicos agora.
 
     Com ``--publicar``, escreve numa base nova e só troca pela servida no fim.
     É o modo para quando há um servidor HTTP lendo o arquivo: o DuckDB recusa
     abrir para escrita enquanto houver leitor.
+
+    ``--classificar`` roda o LLM sobre os dispositivos ainda sem veredito. No
+    modo connector é o único momento em que o LLM entra: o servidor não
+    classifica sob demanda, só serve o que já está no cache.
     """
     config = carregar_config()
     _configurar_log(config.log_level)
 
-    alvo = caminho_em_construcao(config.duckdb_path) if publicar_ao_fim else config.duckdb_path
-    if publicar_ao_fim and alvo.exists():
-        alvo.unlink()
+    alvo = clonar_para_construcao(config.duckdb_path) if publicar_ao_fim else config.duckdb_path
 
     async def rodar() -> None:
         with conectar(alvo) as conexao:
@@ -78,6 +116,10 @@ def sync(
                 except FonteNaoConfigurada as erro:
                     typer.secho(f"{nome}: {erro}", fg=typer.colors.YELLOW)
 
+        if classificar_ao_fim:
+            classificados = await _classificar_pendentes(str(alvo), config, dias=dias_classificacao)
+            typer.echo(f"classificados nesta coleta: {classificados}")
+
         if publicar_ao_fim:
             try:
                 publicado = publicar(config.duckdb_path, forcar=forcar)
@@ -87,6 +129,22 @@ def sync(
             typer.secho(f"base publicada: {publicado}", fg=typer.colors.GREEN)
 
     asyncio.run(rodar())
+
+
+@app.command()
+def classificar(
+    dias: int = typer.Option(365, help="Janela, em dias, dos dispositivos a avaliar"),
+) -> None:
+    """Passa o LLM nos dispositivos ainda sem veredito de uso de IA.
+
+    Serve para encher o cache sem refazer a coleta. Num deploy de connector é
+    isto que produz as classificações: o servidor HTTP não chama o LLM, só serve
+    o que já está gravado. Quem já tem veredito não é reavaliado.
+    """
+    config = carregar_config()
+    _configurar_log(config.log_level)
+    novos = asyncio.run(_classificar_pendentes(str(config.duckdb_path), config, dias=dias))
+    typer.secho(f"classificados agora: {novos}", fg=typer.colors.GREEN)
 
 
 @app.command()

@@ -162,8 +162,12 @@ Então, com `TRANSPORTE=streamable-http`, o servidor **serve só o que já está
 diz isso na resposta. Quem classifica é a coleta, fora do processo do servidor:
 
 ```bash
-uv run anvisa-cli sync --publicar   # coleta, classifica e publica
+uv run anvisa-cli sync --publicar --classificar
 ```
+
+`--classificar` é o único momento em que o LLM entra num deploy de connector. Sem ele a
+coleta atualiza os registros mas não julga os novos, e eles chegam ao servidor como
+`nao_classificado`.
 
 Cada item traz de onde veio o veredito, em `origem_classificacao`:
 
@@ -186,6 +190,13 @@ que a coleta caísse em cima de uma consulta.
 Por isso o sync usa `--publicar`: constrói a base ao lado e troca por `os.replace`, que é
 atômico no POSIX. Quem já abriu continua no arquivo antigo até fechar, o tempo de uma
 requisição; quem abrir depois pega o novo.
+
+**A base ao lado começa como cópia da que está sendo servida, não vazia.** Nem tudo na base
+vem do dataset: o cache de classificações custou uma chamada de LLM por linha, e os
+registros que sumiram do arquivo da Anvisa continuam lá, marcados como não vistos na última
+coleta. Construir do zero jogaria os dois fora. Medido uma vez, sem a cópia: 109
+classificações e 13 registros a menos, publicados sem um aviso. A cópia é feita pelo próprio
+DuckDB (`COPY FROM DATABASE`), porque um `cp` pegaria o arquivo sem o WAL pendente.
 
 ```bash
 uv run anvisa-cli sync --publicar          # constrói ao lado e troca no fim

@@ -14,7 +14,13 @@ from anvisa_mcp.mcp_server.limite import LimitadorPorOrigem, origem_da_requisica
 from anvisa_mcp.mcp_server.tools.samd import buscar_samd_recentes
 from anvisa_mcp.store.db import aplicar_schema, conectar
 from anvisa_mcp.store.queries import gravar_classificacao
-from anvisa_mcp.store.troca import BaseSuspeita, caminho_em_construcao, publicar, reverter
+from anvisa_mcp.store.troca import (
+    BaseSuspeita,
+    caminho_em_construcao,
+    clonar_para_construcao,
+    publicar,
+    reverter,
+)
 
 ENDPOINT = "http://llm-de-teste/v1"
 MODELO = "modelo-de-teste"
@@ -183,3 +189,37 @@ def test_origem_usa_forwarded_for_quando_ha_proxy() -> None:
         "client": ("10.0.0.1", 5000),
     }
     assert origem_da_requisicao(scope) == "203.0.113.9"
+
+
+def test_clone_preserva_o_que_nao_vem_do_dataset(tmp_path: Path) -> None:
+    """A base nova nasce da servida: o cache caro e os sumidos continuam lá."""
+    servida = tmp_path / "base.duckdb"
+    with conectar(servida) as conexao:
+        aplicar_schema(conexao)
+        conexao.execute(
+            "INSERT INTO classificacoes_samd "
+            "(numero_registro, usa_ia, confianca, justificativa, modelo) "
+            "VALUES ('123', true, 0.9, 'menciona rede neural', 'local-model')"
+        )
+        conexao.execute(
+            "INSERT INTO dispositivos_medicos (numero_registro, nome_produto) "
+            "VALUES ('sumiu-do-csv', 'Produto que saiu do dataset')"
+        )
+
+    nova = clonar_para_construcao(servida)
+
+    with conectar(nova, somente_leitura=True) as conexao:
+        assert conexao.execute("SELECT count(*) FROM classificacoes_samd").fetchone()[0] == 1
+        assert (
+            conexao.execute(
+                "SELECT count(*) FROM dispositivos_medicos WHERE numero_registro = 'sumiu-do-csv'"
+            ).fetchone()[0]
+            == 1
+        )
+
+
+def test_clone_sem_base_servida_comeca_vazio(tmp_path: Path) -> None:
+    """Primeira coleta da vida: não há de onde herdar, e isso não é erro."""
+    destino = tmp_path / "ainda-nao-existe.duckdb"
+    nova = clonar_para_construcao(destino)
+    assert not nova.exists()
