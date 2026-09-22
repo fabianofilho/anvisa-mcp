@@ -24,6 +24,14 @@ def _visto_na_ultima_coleta(tabela: str) -> str:
     return f"(atualizado_em >= (SELECT max(atualizado_em) FROM {tabela})) AS visto_na_ultima_coleta"
 
 
+# A mesma condição na busca e na contagem: se divergirem, o total deixa de
+# descrever o conjunto que foi paginado.
+_CASA_MEDICAMENTO = """
+    strip_accents(lower(nome_produto)) LIKE strip_accents(lower(?))
+    OR strip_accents(lower(coalesce(principio_ativo, ''))) LIKE strip_accents(lower(?))
+"""
+
+
 def buscar_medicamentos(
     conexao: duckdb.DuckDBPyConnection,
     termo: str,
@@ -45,8 +53,7 @@ def buscar_medicamentos(
                    situacao, data_situacao, categoria,
                    {_visto_na_ultima_coleta("medicamentos")}
             FROM medicamentos
-            WHERE strip_accents(lower(nome_produto)) LIKE strip_accents(lower(?))
-               OR strip_accents(lower(coalesce(principio_ativo, ''))) LIKE strip_accents(lower(?))
+            WHERE {_CASA_MEDICAMENTO}
             ORDER BY (lower(coalesce(situacao, '')) = 'ativo') DESC,
                      length(nome_produto), nome_produto
             LIMIT ?
@@ -54,6 +61,20 @@ def buscar_medicamentos(
             [padrao, padrao, limite],
         )
     )
+
+
+def contar_medicamentos(conexao: duckdb.DuckDBPyConnection, termo: str) -> int:
+    """Quantos registros casam no total, ignorando o limite de exibição.
+
+    Sem este número, a resposta diz "20 resultados" tanto para um termo com 20
+    registros quanto para um com 557, e quem lê conclui que são 20 no país.
+    """
+    padrao = f"%{termo.strip()}%"
+    linha = conexao.execute(
+        f"SELECT count(*) FROM medicamentos WHERE {_CASA_MEDICAMENTO}",
+        [padrao, padrao],
+    ).fetchone()
+    return int(linha[0]) if linha else 0
 
 
 # Termos que indicam que o registro pode ser software. SaMD é raro: dos 1.832

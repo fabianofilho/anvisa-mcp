@@ -12,7 +12,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from anvisa_mcp.store.db import BaseIndisponivel, conectar
-from anvisa_mcp.store.queries import buscar_medicamentos
+from anvisa_mcp.store.queries import buscar_medicamentos, contar_medicamentos
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,13 @@ class RegistroMedicamento(BaseModel):
     situacao: str | None = Field(
         default=None, description="deferido, indeferido, caducado, em análise"
     )
-    data_situacao: date | None = None
+    data_situacao: date | None = Field(
+        default=None,
+        description=(
+            "Data de vencimento do registro, do campo DATA_VENCIMENTO_REGISTRO do "
+            "dataset da Anvisa. Não é a data em que a situação atual foi decidida."
+        ),
+    )
     categoria: str | None = None
     visto_na_ultima_coleta: bool = Field(
         default=True,
@@ -47,7 +53,24 @@ class RespostaMedicamentos(BaseModel):
     fonte: Fonte = Field(
         description="'mock' = dado de exemplo, ainda não é registro real da Anvisa"
     )
-    total: int
+    total: int = Field(
+        description=(
+            "Quantos registros casam com o termo na base inteira, não quantos vieram "
+            "nesta resposta. Um princípio ativo comum tem centenas, um por detentor "
+            "e apresentação."
+        )
+    )
+    retornados: int = Field(
+        default=0, description="Quantos registros vieram em 'resultados', no máximo 'limite'"
+    )
+    truncado: bool = Field(
+        default=False,
+        description=(
+            "True quando total > retornados. Os que vieram são os ativos e de nome "
+            "mais curto; os demais existem e não estão aqui. Não conte os resultados "
+            "para responder 'quantos registros existem': use 'total'."
+        ),
+    )
     resultados: list[RegistroMedicamento]
     aviso: str | None = None
 
@@ -123,9 +146,11 @@ async def consultar_status_medicamento(
         )
 
     motivo = AVISO_MOCK
+    total_na_base = 0
     try:
         with conectar(caminho_db, somente_leitura=True) as conexao:
             linhas = buscar_medicamentos(conexao, termo, limite=limite)
+            total_na_base = contar_medicamentos(conexao, termo)
     except FileNotFoundError:
         linhas = []
     except BaseIndisponivel as erro:
@@ -142,12 +167,24 @@ async def consultar_status_medicamento(
     if linhas:
         resultados = [RegistroMedicamento.model_validate(linha) for linha in linhas]
         ausentes = sum(1 for r in resultados if not r.visto_na_ultima_coleta)
+        truncado = total_na_base > len(resultados)
+        avisos = [AVISO_AUSENTE_NA_FONTE] if ausentes else []
+        if truncado:
+            avisos.append(
+                f"Casaram {total_na_base} registros e estão aqui os {len(resultados)} "
+                f"primeiros (ativos primeiro, depois nome mais curto). Um princípio "
+                f"ativo comum tem um registro por detentor e apresentação, então "
+                f"não conte os resultados para dizer quantos existem: use 'total'. "
+                f"Para ver mais, aumente 'limite'."
+            )
         return RespostaMedicamentos(
             termo_consultado=termo,
             fonte="duckdb",
-            total=len(resultados),
+            total=total_na_base,
+            retornados=len(resultados),
+            truncado=truncado,
             resultados=resultados,
-            aviso=AVISO_AUSENTE_NA_FONTE if ausentes else None,
+            aviso=" ".join(avisos) or None,
         )
 
     mock = _filtrar_mock(termo)
@@ -155,6 +192,7 @@ async def consultar_status_medicamento(
         termo_consultado=termo,
         fonte="mock",
         total=len(mock),
+        retornados=len(mock),
         resultados=[RegistroMedicamento.model_validate(linha) for linha in mock],
         aviso=motivo,
     )

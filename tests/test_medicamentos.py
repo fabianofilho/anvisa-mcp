@@ -8,6 +8,7 @@ import duckdb
 import pytest
 
 from anvisa_mcp.mcp_server.tools.medicamentos import consultar_status_medicamento
+from anvisa_mcp.store.db import aplicar_schema, conectar
 from anvisa_mcp.store.queries import buscar_medicamentos
 
 
@@ -159,3 +160,45 @@ async def test_sem_aviso_quando_todos_vieram(caminho_db: str) -> None:
     resposta = await consultar_status_medicamento("dipirona", caminho_db=caminho_db)
     assert resposta.aviso is None
     assert all(r.visto_na_ultima_coleta for r in resposta.resultados)
+
+
+@pytest.mark.asyncio
+async def test_total_e_quantos_existem_nao_quantos_vieram(caminho_db: str) -> None:
+    """Dizer 'total: 20' com 557 na base faz quem lê concluir que são 20 no país."""
+    with conectar(caminho_db) as conexao:
+        aplicar_schema(conexao)
+        for i in range(50):
+            _inserir(
+                conexao,
+                numero_registro=str(i),
+                nome_produto=f"DIPIRONA {i}",
+                principio_ativo="dipirona",
+                situacao="Ativo",
+            )
+
+    r = await consultar_status_medicamento("dipirona", caminho_db=caminho_db, limite=20)
+
+    assert r.total == 50, "total tem que ser o universo que casa, nao a pagina"
+    assert r.retornados == 20
+    assert r.truncado is True
+    assert len(r.resultados) == 20
+    assert r.aviso is not None and "50" in r.aviso
+
+
+@pytest.mark.asyncio
+async def test_sem_truncar_nao_inventa_aviso(caminho_db: str) -> None:
+    """Quando tudo coube, truncado é False e não há alarme falso."""
+    with conectar(caminho_db) as conexao:
+        aplicar_schema(conexao)
+        _inserir(
+            conexao,
+            numero_registro="1",
+            nome_produto="PRODUTO UNICO",
+            principio_ativo="raro",
+            situacao="Ativo",
+        )
+
+    r = await consultar_status_medicamento("raro", caminho_db=caminho_db, limite=20)
+
+    assert (r.total, r.retornados, r.truncado) == (1, 1, False)
+    assert r.aviso is None

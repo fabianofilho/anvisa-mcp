@@ -32,21 +32,30 @@ mcp = MCPServer("anvisa-mcp", version="0.1.0")
 
 
 @mcp.tool()
-async def consultar_status_medicamento(nome_ou_principio_ativo: str) -> RespostaMedicamentos:
+async def consultar_status_medicamento(
+    nome_ou_principio_ativo: str, limite: int = 20
+) -> RespostaMedicamentos:
     """Consulta o status do registro de um medicamento na Anvisa.
 
-    Busca por nome comercial ou princípio ativo e devolve todos os registros que
-    casam, com situação (válido, caducado, em análise), número de registro, data e
-    empresa detentora. Quando a base local ainda não foi sincronizada, devolve
-    dados de exemplo com fonte='mock', nesse caso, não trate como informação
-    regulatória.
+    Busca por nome comercial ou princípio ativo e devolve os registros que casam,
+    com situação (válido, caducado, em análise), número de registro, data de
+    vencimento e empresa detentora.
+
+    **Um princípio ativo comum tem centenas de registros**, um por detentor e
+    apresentação: "dipirona" casa com 557. A resposta traz `total` (quantos casam
+    na base inteira) e `retornados` (quantos vieram aqui). Quando `truncado` é
+    True, não conte os resultados para dizer quantos existem, use `total`.
+
+    Quando a base local ainda não foi sincronizada, devolve dados de exemplo com
+    fonte='mock', nesse caso, não trate como informação regulatória.
 
     Args:
         nome_ou_principio_ativo: nome comercial ou princípio ativo, ex.: "dipirona".
+        limite: quantos registros trazer. Aumente para ver além dos primeiros.
     """
     config = carregar_config()
     return await _consultar_status_medicamento(
-        nome_ou_principio_ativo, caminho_db=str(config.duckdb_path)
+        nome_ou_principio_ativo, caminho_db=str(config.duckdb_path), limite=limite
     )
 
 
