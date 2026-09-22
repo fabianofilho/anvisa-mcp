@@ -181,6 +181,28 @@ Cada item traz de onde veio o veredito, em `origem_classificacao`:
 A diferença importa. Um registro que ninguém classificou ainda não é um registro sem IA, e
 a resposta nunca conta os dois juntos.
 
+### Rodar como serviço
+
+`deploy/anvisa-connector.service` é uma unit de usuário pronta, testada nesta configuração:
+
+```bash
+cp deploy/anvisa-connector.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now anvisa-connector
+```
+
+Ela **escuta só em 127.0.0.1**. Expor para fora é uma camada à parte, um proxy reverso
+com TLS ou um túnel, que aponta para essa porta. Manter assim deixa a decisão de expor
+num lugar só, em vez de espalhada em variável de ambiente.
+
+O serviço só lê. Quem escreve é a coleta, que roda separada e troca o arquivo por rename:
+
+```bash
+anvisa-cli sync --publicar --classificar
+```
+
+Se o processo morrer, o systemd sobe de novo em 5 segundos (`Restart=always`).
+
 ### A base não vai junto, e o sync roda fora
 
 O DuckDB recusa abrir para escrita enquanto houver um leitor, e no modo connector o

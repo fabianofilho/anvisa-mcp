@@ -1,0 +1,39 @@
+# Servidor MCP do Anvisa em HTTP, para hospedar como connector.
+#
+# Escuta so no loopback de proposito. Quem publica para fora e a camada da
+# frente (proxy reverso com TLS, ou Tailscale Funnel), que aponta para esta
+# porta. Assim a decisao de expor fica num lugar so, e nao espalhada em
+# variavel de ambiente.
+#
+# Instalar como servico de usuario:
+#   cp deploy/anvisa-connector.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now anvisa-connector
+#
+# A coleta NAO roda aqui: ela e um servico separado que constroi a base ao
+# lado e troca por rename. Este processo so le.
+#   anvisa-cli sync --publicar --classificar
+
+[Unit]
+Description=Servidor MCP do Anvisa em HTTP (modo connector)
+Documentation=https://github.com/fabianofilho/anvisa-mcp
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/anvisa-mcp
+Environment=TRANSPORTE=streamable-http
+Environment=HTTP_HOST=127.0.0.1
+Environment=HTTP_PORTA=8101
+Environment=HTTP_PATH=/mcp
+Environment=HTTP_STATELESS=true
+ExecStart=%h/.local/bin/uv --directory %h/anvisa-mcp run anvisa-mcp
+Restart=always
+RestartSec=5
+ProtectSystem=strict
+ReadWritePaths=%h/anvisa-mcp/data
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target
