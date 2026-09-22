@@ -84,6 +84,31 @@ async def buscar_samd_recentes(
     )
 
 
+def _seguranca_de_transporte(config: Any) -> Any:
+    """Regras de Host/Origin quando o servidor atende por um nome publico.
+
+    O SDK so liga a protecao contra DNS rebinding sozinho quando o bind e
+    loopback, e ai aceita apenas Host de loopback. Atras de um tunel ou proxy o
+    Host que chega e o nome publico, e a requisicao legitima levaria 421. Em vez
+    de desligar a checagem, declaramos os nomes por onde o servidor responde.
+
+    Devolve None quando nao ha nome publico configurado, deixando o padrao do
+    SDK valer.
+    """
+    if not config.http_hosts_publicos:
+        return None
+
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    hosts: list[str] = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+    origens: list[str] = ["http://127.0.0.1:*", "http://localhost:*"]
+    for nome in config.http_hosts_publicos:
+        # Com e sem porta: atras de TLS o Host costuma vir sem o ":443".
+        hosts += [nome, f"{nome}:*"]
+        origens += [f"https://{nome}", f"https://{nome}:*"]
+    return TransportSecuritySettings(allowed_hosts=hosts, allowed_origins=origens)
+
+
 def _com_limite(app: Any, limite_por_minuto: int, limite_global: int) -> Any:
     """Embrulha o app ASGI com o teto de requisicoes por origem.
 
@@ -144,6 +169,7 @@ def main() -> None:
             streamable_http_path=config.http_path,
             stateless_http=config.http_stateless,
             host=config.http_host,
+            transport_security=_seguranca_de_transporte(config),
         ),
         config.http_limite_por_minuto,
         config.http_limite_global_por_minuto,

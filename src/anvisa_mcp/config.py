@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Config(BaseSettings):
@@ -36,6 +36,21 @@ class Config(BaseSettings):
     # Anthropic, entao limitar so por IP juntaria todos os usuarios num balde.
     http_limite_global_por_minuto: int = Field(default=1200, ge=1)
     http_limite_por_minuto: int = Field(default=600, ge=1)
+    # Nomes pelos quais o servidor aceita ser chamado, separados por virgula.
+    # Vazio significa so loopback. O SDK valida o cabecalho Host contra esta
+    # lista e responde 421 fora dela: e defesa contra DNS rebinding, onde um
+    # site qualquer faz o navegador da vitima falar com um servidor local. Atras
+    # de um proxy ou tunel, o Host que chega e o nome publico, entao ele precisa
+    # constar aqui; a alternativa seria desligar a checagem, que e pior.
+    http_hosts_publicos: Annotated[list[str], NoDecode] = Field(default_factory=list)
+
+    @field_validator("http_hosts_publicos", mode="before")
+    @classmethod
+    def _dividir_hosts(cls, valor: object) -> object:
+        """Aceita "a.exemplo,b.exemplo" do .env, nao so lista JSON."""
+        if isinstance(valor, str):
+            return [p.strip() for p in valor.split(",") if p.strip()]
+        return valor
 
     @property
     def modo_connector(self) -> bool:

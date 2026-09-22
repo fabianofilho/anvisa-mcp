@@ -223,3 +223,40 @@ def test_clone_sem_base_servida_comeca_vazio(tmp_path: Path) -> None:
     destino = tmp_path / "ainda-nao-existe.duckdb"
     nova = clonar_para_construcao(destino)
     assert not nova.exists()
+
+
+def test_sem_host_publico_mantem_o_padrao_do_sdk() -> None:
+    """Sem nome público declarado, quem decide é o SDK: só loopback."""
+    from anvisa_mcp.config import Config
+    from anvisa_mcp.mcp_server.server import _seguranca_de_transporte
+
+    assert _seguranca_de_transporte(Config(http_hosts_publicos=[])) is None
+
+
+def test_host_publico_entra_sem_derrubar_o_loopback() -> None:
+    """Declarar o nome do túnel não pode cortar o acesso local, que é como se testa."""
+    from anvisa_mcp.config import Config
+    from anvisa_mcp.mcp_server.server import _seguranca_de_transporte
+
+    regras = _seguranca_de_transporte(Config(http_hosts_publicos=["mcp.exemplo.ts.net"]))
+    assert regras is not None
+    assert regras.enable_dns_rebinding_protection is True
+    assert "mcp.exemplo.ts.net" in regras.allowed_hosts
+    assert "127.0.0.1:*" in regras.allowed_hosts
+    assert "https://mcp.exemplo.ts.net" in regras.allowed_origins
+
+
+def test_host_de_fora_da_lista_continua_recusado() -> None:
+    """A proteção contra DNS rebinding continua valendo para quem não foi declarado."""
+    from mcp.server.transport_security import TransportSecurityMiddleware
+
+    from anvisa_mcp.config import Config
+    from anvisa_mcp.mcp_server.server import _seguranca_de_transporte
+
+    guarda = TransportSecurityMiddleware(
+        _seguranca_de_transporte(Config(http_hosts_publicos=["mcp.exemplo.ts.net"]))
+    )
+    assert guarda._validate_host("mcp.exemplo.ts.net") is True
+    assert guarda._validate_host("mcp.exemplo.ts.net:443") is True
+    assert guarda._validate_host("site-do-atacante.exemplo") is False
+    assert guarda._validate_host(None) is False

@@ -27,6 +27,10 @@ Environment=HTTP_HOST=127.0.0.1
 Environment=HTTP_PORTA=8101
 Environment=HTTP_PATH=/mcp
 Environment=HTTP_STATELESS=true
+# Nome publico pelo qual o tunel ou proxy chama este servidor. Sem ele, o SDK
+# responde 421 (Invalid Host) a tudo que vier de fora, por protecao contra DNS
+# rebinding. Varios nomes separados por virgula.
+Environment=HTTP_HOSTS_PUBLICOS=
 ExecStart=%h/.local/bin/uv --directory %h/anvisa-mcp run anvisa-mcp
 Restart=always
 RestartSec=5

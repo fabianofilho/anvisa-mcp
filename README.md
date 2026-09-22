@@ -181,6 +181,23 @@ Cada item traz de onde veio o veredito, em `origem_classificacao`:
 A diferença importa. Um registro que ninguém classificou ainda não é um registro sem IA, e
 a resposta nunca conta os dois juntos.
 
+### Atrás de um proxy ou túnel, declare o nome público
+
+O SDK do MCP valida o cabeçalho `Host` e responde **421 Invalid Host** ao que não
+reconhece. É proteção contra DNS rebinding, um ataque em que um site qualquer faz o
+navegador da vítima conversar com um servidor que só deveria ser local.
+
+Quando o servidor fica atrás de um túnel, o `Host` que chega é o nome público, não
+`127.0.0.1`, e toda requisição legítima leva 421. A saída certa é declarar o nome, não
+desligar a checagem:
+
+```bash
+HTTP_HOSTS_PUBLICOS=mcp.exemplo.ts.net
+```
+
+Aceita vários separados por vírgula. O loopback continua valendo junto, porque é assim
+que se testa o servidor de dentro da máquina.
+
 ### Rodar como serviço
 
 `deploy/anvisa-connector.service` é uma unit de usuário pronta, testada nesta configuração:
