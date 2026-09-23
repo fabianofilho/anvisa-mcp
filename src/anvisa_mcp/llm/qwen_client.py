@@ -28,6 +28,14 @@ class ClassificationResult(BaseModel):
     usa_ia: bool
     confianca: float = Field(ge=0.0, le=1.0)
     justificativa: str
+    termos_citados: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Trechos que o modelo diz ter lido no texto do registro. Existem para "
+            "serem conferidos contra o texto, não para serem exibidos: um modelo "
+            "pequeno descreve o produto de memória quando o registro é vago."
+        ),
+    )
 
 
 _JSON_NA_RESPOSTA = re.compile(r"\{.*\}", re.DOTALL)

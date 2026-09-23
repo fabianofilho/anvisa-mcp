@@ -399,3 +399,54 @@ def test_validade_sai_do_campo_de_situacao() -> None:
     assert _validade("VIGENTE") is None
     assert _validade(None) is None
     assert _validade("") is None
+
+
+def test_evidencia_rejeita_o_que_nao_esta_no_registro() -> None:
+    """Caso real: um teste rápido descrito como 'mangueira biológica'."""
+    from anvisa_mcp.llm.evidencia import verificar
+
+    registro = "TR COVID-19 AG. TESTE RAPIDO ANTIGENO. FIOCRUZ"
+    assert verificar(["mangueira biológica"], registro).confere is False
+    assert verificar(["TESTE RAPIDO ANTIGENO"], registro).confere is True
+
+
+def test_evidencia_aceita_parafrase_com_acento_e_caixa() -> None:
+    """O alvo é invenção, não estilo: reprovar paráfrase honesta daria ruído."""
+    from anvisa_mcp.llm.evidencia import verificar
+
+    assert verificar(["teste rápido de antígeno"], "TESTE RAPIDO ANTIGENO FIOCRUZ").confere is True
+
+
+def test_evidencia_vazia_e_honesta() -> None:
+    """Não afirmar nada não é erro: o prompt manda baixar a confiança nesse caso."""
+    from anvisa_mcp.llm.evidencia import verificar
+
+    assert verificar([], "qualquer texto").confere is True
+
+
+@respx.mock
+async def test_classificacao_marca_quando_o_modelo_inventa(caminho_db: str) -> None:
+    """O veredito pode estar certo e a justificativa não se sustentar no texto."""
+    with conectar(caminho_db) as conexao:
+        _inserir_dispositivo(conexao, numero="9.1", nome="TR COVID-19 AG", descricao="FIOCRUZ")
+
+    respx.get(f"{ENDPOINT}/models").mock(return_value=httpx.Response(200, json={"data": []}))
+    respx.post(f"{ENDPOINT}/chat/completions").mock(
+        return_value=_resposta_chat(
+            '{"usa_ia": false, "confianca": 0.6, "justificativa": "mangueira biológica '
+            'sem software", "termos_citados": ["mangueira biológica"]}'
+        )
+    )
+
+    resposta = await buscar_samd_recentes(
+        dias=90,
+        apenas_com_ia=False,
+        apenas_software=False,
+        caminho_db=caminho_db,
+        qwen_endpoint=ENDPOINT,
+        qwen_model=MODELO,
+    )
+
+    classificacao = resposta.resultados[0].classificacao
+    assert classificacao.usa_ia is False, "o veredito segue valendo"
+    assert classificacao.evidencia_confere is False, "mas a evidência não está no registro"

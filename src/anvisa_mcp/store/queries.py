@@ -192,7 +192,8 @@ def classificacao_em_cache(
     linhas = _para_dicts(
         conexao.execute(
             """
-            SELECT numero_registro, usa_ia, confianca, justificativa, modelo, classificado_em
+            SELECT numero_registro, usa_ia, confianca, justificativa, modelo,
+                   classificado_em, evidencia_confere
             FROM classificacoes_samd
             WHERE numero_registro = ?
             """,
@@ -210,21 +211,23 @@ def gravar_classificacao(
     confianca: float,
     justificativa: str,
     modelo: str,
+    evidencia_confere: bool | None = None,
 ) -> None:
     """Grava (ou atualiza) a classificação de um registro."""
     conexao.execute(
         """
         INSERT INTO classificacoes_samd
-            (numero_registro, usa_ia, confianca, justificativa, modelo)
-        VALUES (?, ?, ?, ?, ?)
+            (numero_registro, usa_ia, confianca, justificativa, modelo, evidencia_confere)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT (numero_registro) DO UPDATE SET
             usa_ia = excluded.usa_ia,
             confianca = excluded.confianca,
             justificativa = excluded.justificativa,
             modelo = excluded.modelo,
+            evidencia_confere = excluded.evidencia_confere,
             classificado_em = now()
         """,
-        [numero_registro, usa_ia, confianca, justificativa, modelo],
+        [numero_registro, usa_ia, confianca, justificativa, modelo, evidencia_confere],
     )
 
 

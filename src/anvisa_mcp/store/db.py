@@ -61,9 +61,17 @@ CREATE INDEX IF NOT EXISTS idx_disp_data ON dispositivos_medicos (data_registro)
 """
 
 
+# Colunas acrescentadas depois que bases ja existiam. Aplicadas uma a uma para
+# nao exigir recoleta: a base de producao tem classificacao que custou uma
+# chamada de LLM por linha e nao se joga fora para mudar schema.
+_COLUNAS_NOVAS = (("classificacoes_samd", "evidencia_confere", "BOOLEAN"),)
+
+
 def aplicar_schema(conexao: duckdb.DuckDBPyConnection) -> None:
-    """Cria tabelas e índices. Idempotente."""
+    """Cria tabelas e índices, e acrescenta colunas novas. Idempotente."""
     conexao.execute(_DDL)
+    for tabela, coluna, tipo in _COLUNAS_NOVAS:
+        conexao.execute(f"ALTER TABLE {tabela} ADD COLUMN IF NOT EXISTS {coluna} {tipo}")
     conexao.execute(
         "INSERT INTO schema_meta VALUES ('versao', ?) "
         "ON CONFLICT (chave) DO UPDATE SET valor = excluded.valor",

@@ -15,23 +15,28 @@ Exemplos:
 
 Entrada: "Software para detecção automatizada de nódulos pulmonares em tomografia
 computadorizada, baseado em rede neural convolucional treinada com 120.000 exames."
-Saída: {"usa_ia": true, "confianca": 0.95, "justificativa": "Declara rede neural convolucional treinada."}
+Saída: {"usa_ia": true, "confianca": 0.95, "justificativa": "Declara rede neural convolucional treinada.", "termos_citados": ["rede neural convolucional treinada"]}
 
 Entrada: "Sistema de gerenciamento de imagens médicas (PACS) para armazenamento,
 distribuição e visualização de exames em rede hospitalar."
-Saída: {"usa_ia": false, "confianca": 0.9, "justificativa": "PACS de armazenamento e visualização, sem modelo treinado."}
+Saída: {"usa_ia": false, "confianca": 0.9, "justificativa": "PACS de armazenamento e visualização, sem modelo treinado.", "termos_citados": ["armazenamento, distribuição e visualização de exames"]}
 
 Entrada: "Software calcula a dose de radiação a partir de parâmetros inseridos pelo
 operador, usando fórmulas do fabricante."
-Saída: {"usa_ia": false, "confianca": 0.85, "justificativa": "Cálculo determinístico por fórmula, sem aprendizado."}
+Saída: {"usa_ia": false, "confianca": 0.85, "justificativa": "Cálculo determinístico por fórmula, sem aprendizado.", "termos_citados": ["usando fórmulas do fabricante"]}
 
 Entrada: "Algoritmo proprietário que aprende com o histórico do paciente para sugerir
 ajuste de dose de insulina."
-Saída: {"usa_ia": true, "confianca": 0.8, "justificativa": "Algoritmo que aprende com dados do paciente."}
+Saída: {"usa_ia": true, "confianca": 0.8, "justificativa": "Algoritmo que aprende com dados do paciente.", "termos_citados": ["aprende com o histórico do paciente"]}
 
 Regras da resposta:
 - Responda SOMENTE com um objeto JSON, sem texto antes ou depois.
-- Campos: usa_ia (booleano), confianca (número de 0 a 1), justificativa (uma frase curta em português).
+- Campos: usa_ia (booleano), confianca (número de 0 a 1), justificativa (uma frase
+  curta em português) e termos_citados (lista de trechos COPIADOS LITERALMENTE do
+  texto recebido, que sustentam o veredito).
+- termos_citados precisa conter trechos que existem no texto, palavra por palavra. Se
+  o texto não tiver nada que sustente o veredito, devolva a lista vazia e baixe a
+  confianca. Não escreva ali o tipo de produto que você supõe que seja.
 - A documentação da Anvisa costuma ser vaga. O texto que você recebe muitas vezes é só
   nome técnico, nome comercial e fabricante, sem descrição de funcionamento.
 - Calibre a confianca pelo que o texto permite afirmar, não pela sua convicção:

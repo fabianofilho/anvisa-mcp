@@ -16,6 +16,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from anvisa_mcp.llm.classify_samd import classificar_dispositivo
+from anvisa_mcp.llm.evidencia import verificar as verificar_evidencia
 from anvisa_mcp.llm.qwen_client import QwenClient, QwenIndisponivel
 from anvisa_mcp.store.db import BaseIndisponivel, conectar
 from anvisa_mcp.store.queries import (
@@ -37,6 +38,16 @@ class ClassificacaoIA(BaseModel):
     usa_ia: bool | None = Field(description="None quando não foi possível classificar")
     confianca: float | None = Field(default=None, ge=0.0, le=1.0)
     justificativa: str
+    evidencia_confere: bool | None = Field(
+        default=None,
+        description=(
+            "False quando o modelo citou como evidência algo que não está no texto do "
+            "registro. O veredito pode continuar certo, mas a justificativa é o "
+            "mecanismo de controle desta tool, e justificativa inventada o desarma: "
+            "não repasse a descrição do produto sem conferir. None nas classificações "
+            "feitas antes desta checagem existir."
+        ),
+    )
     origem: OrigemClassificacao
     heuristica: bool = Field(
         default=True,
@@ -222,6 +233,11 @@ async def _classificar(
                 usa_ia=bool(cacheado["usa_ia"]),
                 confianca=float(cacheado["confianca"]),
                 justificativa=str(cacheado["justificativa"]),
+                evidencia_confere=(
+                    None
+                    if cacheado.get("evidencia_confere") is None
+                    else bool(cacheado["evidencia_confere"])
+                ),
                 origem="cache",
             )
 
@@ -255,6 +271,20 @@ async def _classificar(
             origem="indisponivel",
         )
 
+    # O modelo aponta os trechos em que se baseou, e eles sao conferidos contra
+    # o registro: sem isso, ele descreve o produto de memoria quando o texto e
+    # vago, e a justificativa deixa de servir de controle.
+    evidencia = verificar_evidencia(
+        resultado.termos_citados,
+        f"{registro['nome_produto']} {registro.get('descricao') or ''}",
+    )
+    if not evidencia.confere:
+        logger.warning(
+            "classificação de %s cita o que não está no registro: %s",
+            numero,
+            ", ".join(evidencia.ausentes),
+        )
+
     if a_gravar is not None:
         a_gravar.append(
             {
@@ -263,6 +293,7 @@ async def _classificar(
                 "confianca": resultado.confianca,
                 "justificativa": resultado.justificativa,
                 "modelo": modelo,
+                "evidencia_confere": evidencia.confere,
             }
         )
 
@@ -270,6 +301,7 @@ async def _classificar(
         usa_ia=resultado.usa_ia,
         confianca=resultado.confianca,
         justificativa=resultado.justificativa,
+        evidencia_confere=evidencia.confere,
         origem="llm",
     )
 
