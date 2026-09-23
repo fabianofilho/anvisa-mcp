@@ -20,6 +20,7 @@ from anvisa_mcp.llm.qwen_client import QwenClient, QwenIndisponivel
 from anvisa_mcp.store.db import BaseIndisponivel, conectar
 from anvisa_mcp.store.queries import (
     classificacao_em_cache,
+    contar_dispositivos_no_periodo,
     dispositivos_no_periodo,
     gravar_classificacao,
 )
@@ -73,7 +74,31 @@ class RespostaSaMD(BaseModel):
     fonte: Fonte = Field(
         description="'mock' = dado de exemplo, ainda não é registro real da Anvisa"
     )
-    total: int
+    total: int = Field(
+        description=(
+            "Quantos dispositivos Classe III/IV existem na janela na base, antes do "
+            "limite de análise e do filtro de IA. É o universo, não o tamanho desta "
+            "lista: não use a contagem dos resultados para dizer quantos foram "
+            "registrados no período."
+        )
+    )
+    analisados: int = Field(
+        default=0,
+        description=(
+            "Quantos registros a tool efetivamente avaliou nesta chamada, no máximo "
+            "'limite'. Os mais recentes primeiro."
+        ),
+    )
+    retornados: int = Field(
+        default=0, description="Quantos sobraram em 'resultados' depois do filtro de IA"
+    )
+    truncado: bool = Field(
+        default=False,
+        description=(
+            "True quando total > analisados: existem registros no período que esta "
+            "chamada nem chegou a olhar. Aumente 'limite' ou reduza 'dias'."
+        ),
+    )
     resultados: list[DispositivoSaMD]
     indeterminados: int = Field(
         default=0,
@@ -273,6 +298,9 @@ async def buscar_samd_recentes(
     pendentes: list[dict[str, Any]] = []
     try:
         with conectar(caminho_db, somente_leitura=True) as conexao:
+            total_no_periodo = contar_dispositivos_no_periodo(
+                conexao, dias=dias, apenas_software=apenas_software
+            )
             registros = dispositivos_no_periodo(
                 conexao, dias=dias, limite=limite, apenas_software=apenas_software
             )
@@ -293,6 +321,7 @@ async def buscar_samd_recentes(
                         if apenas_software
                         else AVISO_HEURISTICA
                     ),
+                    total_no_periodo=total_no_periodo,
                 )
     except FileNotFoundError:
         pass
@@ -332,12 +361,14 @@ def _finalizar(
     fonte: Fonte,
     aviso: str,
     pendentes: list[dict[str, Any]] | None = None,
+    total_no_periodo: int | None = None,
 ) -> tuple[RespostaSaMD, list[dict[str, Any]]]:
     """Filtra, conta os indeterminados e monta a resposta.
 
     Compartilhado pelos dois caminhos, com LLM e no modo connector, para que
     a contagem de indeterminados e os avisos sejam os mesmos nos dois.
     """
+    analisados = len(itens)
     indeterminados = 0
     if apenas_com_ia:
         # Um "não" com confiança baixa quer dizer "o texto não deixa saber". Sumir
@@ -358,12 +389,25 @@ def _finalizar(
     if any(not item.visto_na_ultima_coleta for item in itens):
         aviso = f"{aviso} {AVISO_AUSENTE_NA_FONTE}"
 
+    total = total_no_periodo if total_no_periodo is not None else analisados
+    truncado = total > analisados
+    if truncado:
+        aviso = (
+            f"{aviso} Havia {total} registros Classe III/IV no período e esta chamada "
+            f"analisou os {analisados} mais recentes. Os demais não foram olhados, "
+            f"então não conte os resultados para dizer quantos foram registrados: "
+            f"aumente 'limite' ou reduza 'dias'."
+        )
+
     return (
         RespostaSaMD(
             dias=dias,
             apenas_com_ia=apenas_com_ia,
             fonte=fonte,
-            total=len(itens),
+            total=total,
+            analisados=analisados,
+            retornados=len(itens),
+            truncado=truncado,
             resultados=itens,
             indeterminados=indeterminados,
             aviso=(
@@ -385,6 +429,7 @@ async def _montar_resposta(
     apenas_com_ia: bool,
     fonte: Fonte,
     *,
+    total_no_periodo: int | None = None,
     permitir_llm: bool = True,
     qwen_endpoint: str,
     qwen_model: str,
@@ -417,7 +462,14 @@ async def _montar_resposta(
             )
             for registro in registros
         ]
-        return _finalizar(itens, dias, apenas_com_ia, fonte, f"{aviso} {AVISO_SEM_LLM}")
+        return _finalizar(
+            itens,
+            dias,
+            apenas_com_ia,
+            fonte,
+            f"{aviso} {AVISO_SEM_LLM}",
+            total_no_periodo=total_no_periodo,
+        )
 
     async with QwenClient(
         qwen_endpoint,
@@ -449,4 +501,6 @@ async def _montar_resposta(
             for registro in registros
         ]
 
-    return _finalizar(itens, dias, apenas_com_ia, fonte, aviso, pendentes)
+    return _finalizar(
+        itens, dias, apenas_com_ia, fonte, aviso, pendentes, total_no_periodo=total_no_periodo
+    )

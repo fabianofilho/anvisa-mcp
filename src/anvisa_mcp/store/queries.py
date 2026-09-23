@@ -146,6 +146,44 @@ def dispositivos_no_periodo(
     )
 
 
+def contar_dispositivos_no_periodo(
+    conexao: duckdb.DuckDBPyConnection,
+    *,
+    dias: int,
+    classes: tuple[str, ...] = ("III", "IV"),
+    apenas_software: bool = False,
+) -> int:
+    """Quantos dispositivos existem na janela, ignorando o limite de análise.
+
+    A tool classifica no máximo ``limite`` registros por chamada, e sem este
+    número a resposta não distingue "havia 12 no período" de "havia 900 e eu vi
+    os 50 mais recentes". A segunda leitura, tratada como a primeira, vira
+    contagem errada de quantos SaMD foram registrados no período.
+    """
+    corte = date.today() - timedelta(days=dias)
+    marcadores = ", ".join("?" for _ in classes)
+    parametros: list[Any] = [corte, *classes]
+
+    filtro_software = ""
+    if apenas_software:
+        condicoes = " OR ".join(
+            "upper(coalesce(descricao, '') || ' ' || nome_produto) LIKE ?" for _ in TERMOS_SOFTWARE
+        )
+        filtro_software = f"AND ({condicoes})"
+        parametros.extend(f"%{termo}%" for termo in TERMOS_SOFTWARE)
+
+    linha = conexao.execute(
+        f"""
+        SELECT count(*) FROM dispositivos_medicos
+        WHERE data_registro >= ?
+          AND classe_risco IN ({marcadores})
+          {filtro_software}
+        """,
+        parametros,
+    ).fetchone()
+    return int(linha[0]) if linha else 0
+
+
 def classificacao_em_cache(
     conexao: duckdb.DuckDBPyConnection,
     numero_registro: str,

@@ -11,7 +11,7 @@ import respx
 
 from anvisa_mcp.llm.qwen_client import ClassificationResult, QwenClient, QwenIndisponivel
 from anvisa_mcp.mcp_server.tools.samd import buscar_samd_recentes
-from anvisa_mcp.store.db import conectar
+from anvisa_mcp.store.db import aplicar_schema, conectar
 from anvisa_mcp.store.queries import (
     classificacao_em_cache,
     dispositivos_no_periodo,
@@ -358,6 +358,34 @@ async def test_negativo_de_baixa_confianca_vira_indeterminado(caminho_db: str) -
         qwen_endpoint=ENDPOINT,
         qwen_model=MODELO,
     )
-    assert resposta.total == 0
+    assert resposta.retornados == 0
     assert resposta.indeterminados == 1
     assert resposta.aviso is not None and "não significa que não usem IA" in resposta.aviso
+
+
+@pytest.mark.asyncio
+async def test_total_e_o_universo_do_periodo_nao_o_tamanho_da_lista(caminho_db: str) -> None:
+    """Dizer 'total: 50' com 1832 no período vira contagem errada de SaMD registrados."""
+    with conectar(caminho_db) as conexao:
+        aplicar_schema(conexao)
+        conexao.executemany(
+            "INSERT INTO dispositivos_medicos (numero_registro, nome_produto, classe_risco, "
+            "data_registro, descricao) VALUES (?, ?, 'III', current_date, 'cânula comum')",
+            [[str(i), f"DISPOSITIVO {i}"] for i in range(30)],
+        )
+
+    resposta = await buscar_samd_recentes(
+        dias=90,
+        apenas_com_ia=False,
+        apenas_software=False,
+        caminho_db=caminho_db,
+        limite=10,
+        qwen_endpoint=ENDPOINT,
+        qwen_model=MODELO,
+        permitir_llm=False,
+    )
+
+    assert resposta.total == 30, "o universo do período, não a página"
+    assert resposta.analisados == 10
+    assert resposta.truncado is True
+    assert resposta.aviso is not None and "30" in resposta.aviso

@@ -83,7 +83,7 @@ async def test_modo_connector_serve_o_cache(caminho_db: str) -> None:
         qwen_model=MODELO,
         permitir_llm=False,
     )
-    assert resposta.total == 1
+    assert resposta.retornados == 1
     assert resposta.resultados[0].classificacao.origem == "cache"
 
 
@@ -100,7 +100,8 @@ async def test_nao_classificado_nao_vira_sem_ia(caminho_db: str) -> None:
         qwen_model=MODELO,
         permitir_llm=False,
     )
-    assert resposta.total == 0
+    assert resposta.retornados == 0, "não classificado não pode entrar como 'usa IA'"
+    assert resposta.total == 1, "o registro existe no período e precisa aparecer no universo"
     assert resposta.indeterminados == 1
     assert resposta.aviso is not None and "não classifica sob demanda" in resposta.aviso
 
