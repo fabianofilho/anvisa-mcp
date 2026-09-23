@@ -184,23 +184,38 @@ def contar_dispositivos_no_periodo(
     return int(linha[0]) if linha else 0
 
 
+_CACHE_COLUNAS = (
+    "numero_registro, usa_ia, confianca, justificativa, modelo, classificado_em, evidencia_confere"
+)
+# Sem a coluna nova, que so existe depois da migracao rodar.
+_CACHE_COLUNAS_ANTIGAS = (
+    "numero_registro, usa_ia, confianca, justificativa, modelo, classificado_em"
+)
+
+
 def classificacao_em_cache(
     conexao: duckdb.DuckDBPyConnection,
     numero_registro: str,
 ) -> dict[str, Any] | None:
-    """Classificação já calculada para esse registro, se houver."""
-    linhas = _para_dicts(
-        conexao.execute(
-            """
-            SELECT numero_registro, usa_ia, confianca, justificativa, modelo,
-                   classificado_em, evidencia_confere
-            FROM classificacoes_samd
-            WHERE numero_registro = ?
-            """,
-            [numero_registro],
-        )
-    )
-    return linhas[0] if linhas else None
+    """Classificação já calculada para esse registro, se houver.
+
+    Tolera base anterior à coluna ``evidencia_confere``. Sem isso, quem
+    atualizasse o código antes de rodar a coleta veria a consulta falhar e a tool
+    cair para dados de exemplo, que é a pior forma de errar aqui: a resposta
+    continua vindo, com cara de real.
+    """
+    for colunas in (_CACHE_COLUNAS, _CACHE_COLUNAS_ANTIGAS):
+        try:
+            linhas = _para_dicts(
+                conexao.execute(
+                    f"SELECT {colunas} FROM classificacoes_samd WHERE numero_registro = ?",
+                    [numero_registro],
+                )
+            )
+        except duckdb.Error:
+            continue
+        return linhas[0] if linhas else None
+    return None
 
 
 def gravar_classificacao(

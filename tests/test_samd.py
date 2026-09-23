@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from pathlib import Path
 
 import duckdb
 import httpx
@@ -450,3 +451,21 @@ async def test_classificacao_marca_quando_o_modelo_inventa(caminho_db: str) -> N
     classificacao = resposta.resultados[0].classificacao
     assert classificacao.usa_ia is False, "o veredito segue valendo"
     assert classificacao.evidencia_confere is False, "mas a evidência não está no registro"
+
+
+def test_cache_le_base_anterior_a_migracao(tmp_path: Path) -> None:
+    """Código novo com base velha não pode cair para mock: a resposta pareceria real."""
+    caminho = tmp_path / "antiga.duckdb"
+    conexao = duckdb.connect(str(caminho))
+    conexao.execute(
+        "CREATE TABLE classificacoes_samd (numero_registro VARCHAR PRIMARY KEY, "
+        "usa_ia BOOLEAN, confianca DOUBLE, justificativa VARCHAR, modelo VARCHAR, "
+        "classificado_em TIMESTAMP DEFAULT current_timestamp)"
+    )
+    conexao.execute("INSERT INTO classificacoes_samd VALUES ('1', true, 0.9, 'x', 'm', now())")
+
+    achado = classificacao_em_cache(conexao, "1")
+
+    assert achado is not None, "a consulta não pode falhar por causa da coluna nova"
+    assert achado["usa_ia"] is True
+    conexao.close()
