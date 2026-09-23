@@ -389,3 +389,13 @@ async def test_total_e_o_universo_do_periodo_nao_o_tamanho_da_lista(caminho_db: 
     assert resposta.analisados == 10
     assert resposta.truncado is True
     assert resposta.aviso is not None and "30" in resposta.aviso
+
+
+def test_validade_sai_do_campo_de_situacao() -> None:
+    """O campo mistura 'VIGENTE' com data; quem lê via '14/09/2036' e adivinhava."""
+    from anvisa_mcp.mcp_server.tools.samd import _validade
+
+    assert _validade("14/09/2036") == date(2036, 9, 14)
+    assert _validade("VIGENTE") is None
+    assert _validade(None) is None
+    assert _validade("") is None

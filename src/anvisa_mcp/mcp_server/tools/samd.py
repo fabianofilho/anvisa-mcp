@@ -10,7 +10,7 @@ Independente da tool de medicamentos.
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -51,7 +51,23 @@ class DispositivoSaMD(BaseModel):
     nome_produto: str
     empresa_detentora: str | None = None
     classe_risco: str | None = None
-    situacao: str | None = None
+    situacao: str | None = Field(
+        default=None,
+        description=(
+            "Campo VALIDADE_REGISTRO_CADASTRO do dataset, como a Anvisa entrega. Ele "
+            "mistura duas coisas: para a maioria vem 'VIGENTE', para o resto vem uma "
+            "data de validade. Quando for data, ela está também em "
+            "'validade_registro', já estruturada."
+        ),
+    )
+    validade_registro: date | None = Field(
+        default=None,
+        description=(
+            "Data de validade do registro, quando 'situacao' traz uma data em vez de "
+            "'VIGENTE'. None não significa registro sem prazo: significa que a fonte "
+            "não deu data para este registro."
+        ),
+    )
     data_registro: date | None = None
     visto_na_ultima_coleta: bool = Field(
         default=True,
@@ -169,6 +185,21 @@ AVISO_FILTRO_SOFTWARE = (
     "Um produto que use IA sem mencionar esses termos não aparece aqui. "
     "Para varrer todos os dispositivos do período, use apenas_software=False."
 )
+
+
+def _validade(situacao: str | None) -> date | None:
+    """Data escondida no campo de situação.
+
+    ``VALIDADE_REGISTRO_CADASTRO`` vem "VIGENTE" para a maioria e uma data para o
+    resto, no mesmo campo. Quem lê a resposta via "14/09/2036" num campo chamado
+    situação e tinha que adivinhar o que era.
+    """
+    if not situacao:
+        return None
+    try:
+        return datetime.strptime(situacao.strip(), "%d/%m/%Y").date()
+    except ValueError:
+        return None
 
 
 async def _classificar(
@@ -449,6 +480,7 @@ async def _montar_resposta(
                 empresa_detentora=registro.get("empresa_detentora"),
                 classe_risco=registro.get("classe_risco"),
                 situacao=registro.get("situacao"),
+                validade_registro=_validade(registro.get("situacao")),
                 data_registro=registro.get("data_registro"),
                 visto_na_ultima_coleta=bool(registro.get("visto_na_ultima_coleta", True)),
                 classificacao=await _classificar(
@@ -486,6 +518,7 @@ async def _montar_resposta(
                 empresa_detentora=registro.get("empresa_detentora"),
                 classe_risco=registro.get("classe_risco"),
                 situacao=registro.get("situacao"),
+                validade_registro=_validade(registro.get("situacao")),
                 data_registro=registro.get("data_registro"),
                 visto_na_ultima_coleta=bool(registro.get("visto_na_ultima_coleta", True)),
                 classificacao=await _classificar(
