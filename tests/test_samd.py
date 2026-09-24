@@ -667,3 +667,13 @@ async def test_reclassificar_com_llm_fora_serve_o_antigo(caminho_db: str) -> Non
 
     assert resposta.resultados[0].classificacao.origem == "cache"
     assert _classificacoes(caminho_db) == [("1", "veredito antigo", None)]
+
+
+def test_prompt_vem_do_pacote() -> None:
+    """O prompt é recurso do pacote: sem isso ele fica fora do wheel."""
+    from importlib.resources import files
+
+    from anvisa_mcp.llm.classify_samd import NOME_TEMPLATE, renderizar_prompt
+
+    assert files("anvisa_mcp").joinpath("prompts", NOME_TEMPLATE).is_file()
+    assert "usa_ia" in renderizar_prompt()

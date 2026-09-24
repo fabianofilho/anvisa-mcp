@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import logging
 from functools import lru_cache
-from pathlib import Path
+from importlib.resources import files
 
-from jinja2 import Environment, FileSystemLoader, select_autoescape
+from jinja2 import Environment, Template, select_autoescape
 
 from anvisa_mcp.llm.qwen_client import ClassificationResult, QwenClient
 
@@ -20,22 +20,24 @@ logger = logging.getLogger(__name__)
 NOME_TEMPLATE = "classificar_samd_ia.jinja2"
 
 
-def diretorio_prompts() -> Path:
-    """Diretório ``prompts/`` na raiz do repositório."""
-    return Path(__file__).resolve().parents[3] / "prompts"
+def texto_do_prompt(nome: str = NOME_TEMPLATE) -> str:
+    """Conteúdo de um template em ``anvisa_mcp/prompts``.
+
+    Lido como recurso do pacote, não por caminho relativo à raiz do repositório:
+    assim o prompt vai junto no wheel e funciona fora do checkout.
+    """
+    return files("anvisa_mcp").joinpath("prompts", nome).read_text(encoding="utf-8")
 
 
 @lru_cache(maxsize=1)
-def _ambiente_jinja() -> Environment:
-    return Environment(
-        loader=FileSystemLoader(diretorio_prompts()),
-        autoescape=select_autoescape(default=False, default_for_string=False),
-    )
+def _template() -> Template:
+    ambiente = Environment(autoescape=select_autoescape(default=False, default_for_string=False))
+    return ambiente.from_string(texto_do_prompt())
 
 
 def renderizar_prompt(**variaveis: object) -> str:
     """Renderiza o template de classificação."""
-    return _ambiente_jinja().get_template(NOME_TEMPLATE).render(**variaveis)
+    return _template().render(**variaveis)
 
 
 async def classificar_dispositivo(
