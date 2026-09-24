@@ -17,3 +17,6 @@ venv/
 data/
 !src/anvisa_mcp/data/
 .tmp/
+
+# Estado local do Claude Code (worktrees de trabalho ficam aqui)
+.claude/
