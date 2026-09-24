@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timedelta
 
 import duckdb
 import pytest
 
 from anvisa_mcp.mcp_server.tools.medicamentos import consultar_status_medicamento
+from anvisa_mcp.store.coleta import aviso_de_coleta_antiga
 from anvisa_mcp.store.db import aplicar_schema, conectar
-from anvisa_mcp.store.queries import buscar_medicamentos
+from anvisa_mcp.store.queries import (
+    buscar_medicamentos,
+    contar_medicamentos,
+    numeros_de_registro_candidatos,
+)
 
 
 def _inserir(conexao: duckdb.DuckDBPyConnection, **campos: object) -> None:
@@ -202,3 +207,100 @@ async def test_sem_truncar_nao_inventa_aviso(caminho_db: str) -> None:
 
     assert (r.total, r.retornados, r.truncado) == (1, 1, False)
     assert r.aviso is None
+
+
+# --- base populada, busca sem resultado, número de registro, curingas -------
+
+
+async def test_base_populada_sem_casamento_nao_devolve_mock(caminho_db: str) -> None:
+    """Termo inexistente numa base com dados devolvia a dipirona de exemplo."""
+    with conectar(caminho_db) as conexao:
+        _inserir(conexao, numero_registro="118190006", nome_produto="DELTALAB", situacao="Ativo")
+
+    r = await consultar_status_medicamento("xyzinexistente", caminho_db=caminho_db)
+
+    assert r.fonte == "duckdb"
+    assert (r.total, r.retornados, r.resultados) == (0, 0, [])
+    assert r.aviso is not None and "Nenhum registro casou" in r.aviso
+    assert "sincronizada" not in r.aviso
+
+
+@pytest.mark.parametrize("termo", ["118190006", "1.1819.0006", "1181900060011", " 118190006 "])
+async def test_busca_por_numero_de_registro(termo: str, caminho_db: str) -> None:
+    with conectar(caminho_db) as conexao:
+        _inserir(conexao, numero_registro="118190006", nome_produto="DELTALAB", situacao="Ativo")
+        _inserir(conexao, numero_registro="100430233", nome_produto="DIPBE", situacao="Ativo")
+
+    r = await consultar_status_medicamento(termo, caminho_db=caminho_db)
+
+    assert r.fonte == "duckdb"
+    assert [x.numero_registro for x in r.resultados] == ["118190006"]
+    assert r.total == 1
+
+
+def test_numero_parcial_nao_casa_registro(db: duckdb.DuckDBPyConnection) -> None:
+    """Número de registro casa exato: um trecho casaria centenas por acaso."""
+    _inserir(db, numero_registro="118190006", nome_produto="DELTALAB")
+    assert buscar_medicamentos(db, "11819") == []
+
+
+@pytest.mark.parametrize("termo", ["%", "_", "%%", "a_b"])
+def test_curingas_do_like_sao_literais(termo: str, db: duckdb.DuckDBPyConnection) -> None:
+    """'%' casava a base inteira; agora só casa quem tem o caractere no nome."""
+    _inserir(db, numero_registro="1", nome_produto="DIPIRONA")
+    _inserir(db, numero_registro="2", nome_produto="SNIF 3%")
+    _inserir(db, numero_registro="3", nome_produto="A_B SOLUCAO")
+    esperado = {
+        "%": ["SNIF 3%"],
+        "_": ["A_B SOLUCAO"],
+        "%%": [],
+        "a_b": ["A_B SOLUCAO"],
+    }[termo]
+    assert [r["nome_produto"] for r in buscar_medicamentos(db, termo)] == esperado
+    assert contar_medicamentos(db, termo) == len(esperado)
+
+
+def test_numeros_de_registro_candidatos() -> None:
+    assert numeros_de_registro_candidatos("1.0582.0010") == ["105820010"]
+    assert numeros_de_registro_candidatos("1058200100011") == ["1058200100011", "105820010"]
+    assert numeros_de_registro_candidatos("dipirona 500") == []
+    assert numeros_de_registro_candidatos("...") == []
+
+
+# --- data da coleta -----------------------------------------------------------
+
+
+async def test_resposta_traz_coletado_em(caminho_db: str) -> None:
+    with conectar(caminho_db) as conexao:
+        _inserir(conexao, numero_registro="1", nome_produto="DIPIRONA", situacao="Ativo")
+
+    r = await consultar_status_medicamento("dipirona", caminho_db=caminho_db)
+
+    assert r.coletado_em is not None
+    assert datetime.now() - r.coletado_em < timedelta(minutes=5)
+    assert r.aviso is None
+
+
+async def test_coleta_antiga_gera_aviso(caminho_db: str) -> None:
+    """Sem canal de alerta, a idade da base é como quem consulta percebe o sync parado."""
+    with conectar(caminho_db) as conexao:
+        _inserir(conexao, numero_registro="1", nome_produto="DIPIRONA", situacao="Ativo")
+        conexao.execute("UPDATE medicamentos SET atualizado_em = now() - INTERVAL 3 DAY")
+
+    r = await consultar_status_medicamento("dipirona", caminho_db=caminho_db)
+
+    assert r.aviso is not None and "48 horas" in r.aviso
+
+
+async def test_mock_nao_tem_coletado_em(caminho_db: str) -> None:
+    r = await consultar_status_medicamento("dipirona", caminho_db=caminho_db)
+    assert r.fonte == "mock"
+    assert r.coletado_em is None
+
+
+def test_aviso_de_coleta_antiga() -> None:
+    agora = datetime(2026, 9, 24, 12, 0)
+    assert aviso_de_coleta_antiga(None, agora=agora) is None
+    assert aviso_de_coleta_antiga(agora - timedelta(hours=47), agora=agora) is None
+    aviso = aviso_de_coleta_antiga(agora - timedelta(hours=49), agora=agora)
+    assert aviso is not None and "22/09/2026 11:00" in aviso

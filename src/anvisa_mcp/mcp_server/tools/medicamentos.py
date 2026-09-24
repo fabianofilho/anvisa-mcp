@@ -6,13 +6,19 @@ Independente da tool de SaMD: não compartilha estado nem exige que ela rode ant
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from anvisa_mcp.store.coleta import aviso_de_coleta_antiga
 from anvisa_mcp.store.db import BaseIndisponivel, conectar
-from anvisa_mcp.store.queries import buscar_medicamentos, contar_medicamentos
+from anvisa_mcp.store.queries import (
+    buscar_medicamentos,
+    contar_medicamentos,
+    total_de_linhas,
+    ultima_coleta,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +33,11 @@ class RegistroMedicamento(BaseModel):
     principio_ativo: str | None = None
     empresa_detentora: str | None = None
     situacao: str | None = Field(
-        default=None, description="deferido, indeferido, caducado, em análise"
+        default=None,
+        description=(
+            "Como o dataset aberto da Anvisa entrega: 'Ativo' ou 'Inativo'. O arquivo "
+            "não distingue cancelado, caducado ou vencido dentro de 'Inativo'."
+        ),
     )
     data_situacao: date | None = Field(
         default=None,
@@ -52,6 +62,13 @@ class RespostaMedicamentos(BaseModel):
     termo_consultado: str
     fonte: Fonte = Field(
         description="'mock' = dado de exemplo, ainda não é registro real da Anvisa"
+    )
+    coletado_em: datetime | None = Field(
+        default=None,
+        description=(
+            "Quando a base local foi atualizada pela última vez a partir do arquivo da "
+            "Anvisa (horário local do servidor). None quando a resposta é dado de exemplo."
+        ),
     )
     total: int = Field(
         description=(
@@ -125,50 +142,67 @@ def _filtrar_mock(termo: str) -> list[dict[str, Any]]:
 
 
 async def consultar_status_medicamento(
-    nome_ou_principio_ativo: str,
+    termo: str,
     *,
     caminho_db: str,
     limite: int = 20,
 ) -> RespostaMedicamentos:
-    """Status do registro de um medicamento, por nome comercial ou princípio ativo.
+    """Status do registro de um medicamento.
 
-    Devolve todos os resultados casados, não só o primeiro: grafias variam e a
-    ambiguidade é do usuário resolver.
+    ``termo`` é nome comercial, princípio ativo ou número de registro. Devolve
+    todos os resultados casados, não só o primeiro: grafias variam e a
+    ambiguidade é do usuário resolver. Dado de exemplo (``fonte='mock'``) só
+    aparece quando a base não existe, está vazia ou não pôde ser aberta; com a
+    base populada, termo sem correspondência devolve lista vazia.
     """
-    termo = nome_ou_principio_ativo.strip()
+    termo = termo.strip()
     if not termo:
         return RespostaMedicamentos(
             termo_consultado=termo,
             fonte="duckdb",
             total=0,
             resultados=[],
-            aviso="Informe um nome comercial ou princípio ativo.",
+            aviso="Informe um nome comercial, princípio ativo ou número de registro.",
         )
 
     motivo = AVISO_MOCK
     total_na_base = 0
+    linhas: list[dict[str, Any]] = []
+    coletado_em: datetime | None = None
+    base_populada = False
     try:
         with conectar(caminho_db, somente_leitura=True) as conexao:
-            linhas = buscar_medicamentos(conexao, termo, limite=limite)
-            total_na_base = contar_medicamentos(conexao, termo)
+            if total_de_linhas(conexao, "medicamentos") > 0:
+                base_populada = True
+                linhas = buscar_medicamentos(conexao, termo, limite=limite)
+                total_na_base = contar_medicamentos(conexao, termo)
+                coletado_em = ultima_coleta(conexao, "medicamentos")
     except FileNotFoundError:
-        linhas = []
+        pass
     except BaseIndisponivel as erro:
-        # A base tem dados, mas está travada (sync em curso). Dizer "não
-        # sincronizada" seria falso; o aviso precisa nomear a causa real.
+        # A base tem dados, mas está travada. Dizer "não sincronizada" seria
+        # falso; o aviso precisa nomear a causa real.
         logger.warning("base local indisponível: %s", erro)
-        linhas = []
         motivo = AVISO_BASE_TRAVADA
     except Exception:  # noqa: BLE001 - nenhuma falha de base pode derrubar a tool
         logger.exception("falha ao consultar o DuckDB")
-        linhas = []
         motivo = AVISO_BASE_TRAVADA
 
-    if linhas:
+    if base_populada:
+        # Base com dados: a resposta vem dela, mesmo vazia. Cair para o exemplo
+        # aqui devolveria um medicamento fictício como se fosse o procurado.
         resultados = [RegistroMedicamento.model_validate(linha) for linha in linhas]
         ausentes = sum(1 for r in resultados if not r.visto_na_ultima_coleta)
         truncado = total_na_base > len(resultados)
-        avisos = [AVISO_AUSENTE_NA_FONTE] if ausentes else []
+        avisos = []
+        if not resultados:
+            avisos.append(
+                f"Nenhum registro casou com '{termo}' na base. A busca é por trecho do "
+                "nome comercial ou do princípio ativo, ou pelo número de registro "
+                "completo. Confira a grafia ou tente só parte do nome."
+            )
+        if ausentes:
+            avisos.append(AVISO_AUSENTE_NA_FONTE)
         if truncado:
             avisos.append(
                 f"Casaram {total_na_base} registros e estão aqui os {len(resultados)} "
@@ -177,9 +211,13 @@ async def consultar_status_medicamento(
                 f"não conte os resultados para dizer quantos existem: use 'total'. "
                 f"Para ver mais, aumente 'limite'."
             )
+        antiga = aviso_de_coleta_antiga(coletado_em)
+        if antiga:
+            avisos.append(antiga)
         return RespostaMedicamentos(
             termo_consultado=termo,
             fonte="duckdb",
+            coletado_em=coletado_em,
             total=total_na_base,
             retornados=len(resultados),
             truncado=truncado,
