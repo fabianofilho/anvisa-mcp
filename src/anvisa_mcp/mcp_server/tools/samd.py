@@ -114,7 +114,8 @@ class RespostaSaMD(BaseModel):
     )
     total: int = Field(
         description=(
-            "Quantos dispositivos Classe III/IV existem na janela na base, antes do "
+            "Quantos dispositivos Classe III/IV existem na janela na base (só os que "
+            "passam no filtro de software, quando apenas_software=True), antes do "
             "limite de análise e do filtro de IA. É o universo, não o tamanho desta "
             "lista: não use a contagem dos resultados para dizer quantos foram "
             "registrados no período."
@@ -500,7 +501,7 @@ def _finalizar(
     truncado = total > analisados
     if truncado:
         aviso = (
-            f"{aviso} Havia {total} registros Classe III/IV no período e esta chamada "
+            f"{aviso} Havia {total} registros candidatos no período e esta chamada "
             f"analisou os {analisados} mais recentes. Os demais não foram olhados, "
             f"então não conte os resultados para dizer quantos foram registrados: "
             f"aumente 'limite' ou reduza 'dias'."
