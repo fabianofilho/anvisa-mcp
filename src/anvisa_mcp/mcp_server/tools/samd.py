@@ -18,12 +18,15 @@ from pydantic import BaseModel, Field
 from anvisa_mcp.llm.classify_samd import classificar_dispositivo
 from anvisa_mcp.llm.evidencia import verificar as verificar_evidencia
 from anvisa_mcp.llm.qwen_client import QwenClient, QwenIndisponivel
+from anvisa_mcp.store.coleta import aviso_de_coleta_antiga
 from anvisa_mcp.store.db import BaseIndisponivel, conectar
 from anvisa_mcp.store.queries import (
     classificacao_em_cache,
     contar_dispositivos_no_periodo,
     dispositivos_no_periodo,
     gravar_classificacao,
+    total_de_linhas,
+    ultima_coleta,
 )
 
 logger = logging.getLogger(__name__)
@@ -100,6 +103,14 @@ class RespostaSaMD(BaseModel):
     apenas_com_ia: bool
     fonte: Fonte = Field(
         description="'mock' = dado de exemplo, ainda não é registro real da Anvisa"
+    )
+    coletado_em: datetime | None = Field(
+        default=None,
+        description=(
+            "Quando a base local de dispositivos foi atualizada pela última vez a partir "
+            "do arquivo da Anvisa (horário local do servidor). None quando a resposta é "
+            "dado de exemplo."
+        ),
     )
     total: int = Field(
         description=(
@@ -191,6 +202,12 @@ AVISO_SEM_LLM = (
     "'sem IA', são 'não se sabe'."
 )
 
+AVISO_NAO_GRAVADO = (
+    "Os registros com origem='llm' foram classificados agora e não ficam gravados: o "
+    "servidor não escreve na base. Para guardar os vereditos, rode "
+    "'anvisa-cli classificar' (com --publicar se houver connector lendo a base)."
+)
+
 AVISO_FILTRO_SOFTWARE = (
     "Só foram analisados registros cujo texto sugere software (por palavra-chave). "
     "Um produto que use IA sem mencionar esses termos não aparece aqui. "
@@ -222,13 +239,26 @@ async def _classificar(
     usar_cache: bool,
     a_gravar: list[dict[str, Any]] | None = None,
     permitir_llm: bool = True,
+    reclassificar_sem_evidencia: bool = False,
 ) -> ClassificacaoIA:
-    """Classificação de um registro: cache primeiro, LLM depois, erro claro por último."""
+    """Classificação de um registro: cache primeiro, LLM depois, erro claro por último.
+
+    Com ``reclassificar_sem_evidencia``, um veredito em cache que não passou pela
+    checagem de evidência (``evidencia_confere`` nulo, feito antes dela existir)
+    vale como pendente e volta ao LLM, desde que ele esteja no ar. Sem LLM, o
+    veredito antigo continua servindo.
+    """
     numero = registro["numero_registro"]
 
     if usar_cache and conexao is not None:
         cacheado = classificacao_em_cache(conexao, numero)
-        if cacheado is not None:
+        refazer = (
+            reclassificar_sem_evidencia
+            and cliente is not None
+            and cacheado is not None
+            and cacheado.get("evidencia_confere") is None
+        )
+        if cacheado is not None and not refazer:
             return ClassificacaoIA(
                 usa_ia=bool(cacheado["usa_ia"]),
                 confianca=float(cacheado["confianca"]),
@@ -309,9 +339,10 @@ async def _classificar(
 def _persistir_classificacoes(caminho_db: str, pendentes: list[dict[str, Any]]) -> None:
     """Grava o cache numa conexão de escrita própria.
 
-    A consulta roda em modo leitura (para não brigar com o sync pelo lock), mas
-    o cache precisa escrever. Se a base estiver travada, o cache é pulado: é
-    otimização, não resposta.
+    Só a CLI chama com ``gravar_cache=True``, e num deploy com connector ela
+    escreve na base em construção, nunca na servida. A consulta roda em modo
+    leitura, e a escrita vem depois. Se a base estiver travada, o cache é
+    pulado: é otimização, não resposta.
     """
     if not pendentes:
         return
@@ -332,6 +363,8 @@ async def buscar_samd_recentes(
     *,
     caminho_db: str,
     permitir_llm: bool = True,
+    gravar_cache: bool = False,
+    reclassificar_sem_evidencia: bool = False,
     qwen_endpoint: str,
     qwen_model: str,
     timeout_segundos: float = 120.0,
@@ -344,30 +377,42 @@ async def buscar_samd_recentes(
     Sem ele, os primeiros registros por data são quase sempre cânulas, parafusos e
     testes rápidos: no último ano, 13 de 1.832 registros Classe III/IV mencionam
     software. O filtro troca recall por custo, e o aviso da resposta diz isso.
+
+    ``gravar_cache`` é False no servidor MCP: ele nunca abre a base para escrita,
+    para não disputar o lock com o connector nem escrever num arquivo que o sync
+    está prestes a trocar. Quem grava é a CLI (``anvisa-cli classificar`` e
+    ``sync --classificar``).
     """
-    if dias <= 0:
+    if dias <= 0 or limite <= 0:
         return RespostaSaMD(
             dias=dias,
             apenas_com_ia=apenas_com_ia,
             fonte="duckdb",
             total=0,
             resultados=[],
-            aviso="O parâmetro 'dias' precisa ser maior que zero.",
+            aviso="Os parâmetros 'dias' e 'limite' precisam ser maiores que zero.",
         )
 
     fonte: Fonte = "duckdb"
     motivo_mock = AVISO_MOCK
     resposta: RespostaSaMD | None = None
     pendentes: list[dict[str, Any]] = []
+    aviso_base = (
+        f"{AVISO_HEURISTICA} {AVISO_FILTRO_SOFTWARE}" if apenas_software else AVISO_HEURISTICA
+    )
     try:
         with conectar(caminho_db, somente_leitura=True) as conexao:
-            total_no_periodo = contar_dispositivos_no_periodo(
-                conexao, dias=dias, apenas_software=apenas_software
-            )
-            registros = dispositivos_no_periodo(
-                conexao, dias=dias, limite=limite, apenas_software=apenas_software
-            )
-            if registros:
+            if total_de_linhas(conexao, "dispositivos_medicos") > 0:
+                coletado_em = ultima_coleta(conexao, "dispositivos_medicos")
+                antiga = aviso_de_coleta_antiga(coletado_em)
+                total_no_periodo = contar_dispositivos_no_periodo(
+                    conexao, dias=dias, apenas_software=apenas_software
+                )
+                registros = dispositivos_no_periodo(
+                    conexao, dias=dias, limite=limite, apenas_software=apenas_software
+                )
+                # Base com dados e janela vazia continua sendo resposta da base:
+                # cair para o exemplo mostraria um dispositivo fictício como real.
                 resposta, pendentes = await _montar_resposta(
                     conexao,
                     registros,
@@ -375,17 +420,16 @@ async def buscar_samd_recentes(
                     apenas_com_ia,
                     fonte,
                     permitir_llm=permitir_llm,
+                    gravar_cache=gravar_cache,
+                    reclassificar_sem_evidencia=reclassificar_sem_evidencia,
                     qwen_endpoint=qwen_endpoint,
                     qwen_model=qwen_model,
                     timeout_segundos=timeout_segundos,
                     max_tentativas=max_tentativas,
-                    aviso=(
-                        f"{AVISO_HEURISTICA} {AVISO_FILTRO_SOFTWARE}"
-                        if apenas_software
-                        else AVISO_HEURISTICA
-                    ),
+                    aviso=f"{aviso_base} {antiga}" if antiga else aviso_base,
                     total_no_periodo=total_no_periodo,
                 )
+                resposta.coletado_em = coletado_em
     except FileNotFoundError:
         pass
     except BaseIndisponivel as erro:
@@ -494,6 +538,8 @@ async def _montar_resposta(
     *,
     total_no_periodo: int | None = None,
     permitir_llm: bool = True,
+    gravar_cache: bool = False,
+    reclassificar_sem_evidencia: bool = False,
     qwen_endpoint: str,
     qwen_model: str,
     timeout_segundos: float,
@@ -559,13 +605,20 @@ async def _montar_resposta(
                     registro,
                     modelo=qwen_model,
                     usar_cache=fonte == "duckdb",
-                    a_gravar=pendentes if fonte == "duckdb" and permitir_llm else None,
+                    a_gravar=pendentes if fonte == "duckdb" and gravar_cache else None,
                     permitir_llm=permitir_llm,
+                    reclassificar_sem_evidencia=reclassificar_sem_evidencia,
                 ),
             )
             for registro in registros
         ]
 
+    if (
+        fonte == "duckdb"
+        and not gravar_cache
+        and any(i.classificacao.origem == "llm" for i in itens)
+    ):
+        aviso = f"{aviso} {AVISO_NAO_GRAVADO}"
     return _finalizar(
         itens, dias, apenas_com_ia, fonte, aviso, pendentes, total_no_periodo=total_no_periodo
     )

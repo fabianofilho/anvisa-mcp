@@ -469,3 +469,201 @@ def test_cache_le_base_anterior_a_migracao(tmp_path: Path) -> None:
     assert achado is not None, "a consulta não pode falhar por causa da coluna nova"
     assert achado["usa_ia"] is True
     conexao.close()
+
+
+# --- base populada, janela vazia, data da coleta ------------------------------
+
+
+async def test_base_populada_janela_vazia_nao_devolve_mock(caminho_db: str) -> None:
+    """Janela sem registros numa base com dados devolvia o detector de nódulos fictício."""
+    with conectar(caminho_db) as conexao:
+        _inserir_dispositivo(conexao, numero="1", nome="ANTIGO", dias_atras=400)
+
+    resposta = await buscar_samd_recentes(
+        dias=2,
+        apenas_com_ia=False,
+        caminho_db=caminho_db,
+        qwen_endpoint=ENDPOINT,
+        qwen_model=MODELO,
+        permitir_llm=False,
+    )
+
+    assert resposta.fonte == "duckdb"
+    assert (resposta.total, resposta.retornados, resposta.resultados) == (0, 0, [])
+    assert resposta.aviso is not None and "sincronizada" not in resposta.aviso
+    assert resposta.coletado_em is not None
+
+
+@pytest.mark.parametrize(("dias", "limite"), [(0, 50), (90, 0), (90, -1)])
+async def test_parametros_invalidos_nao_viram_mock(dias: int, limite: int, caminho_db: str) -> None:
+    resposta = await buscar_samd_recentes(
+        dias=dias, limite=limite, caminho_db=caminho_db, qwen_endpoint=ENDPOINT, qwen_model=MODELO
+    )
+    assert resposta.fonte == "duckdb"
+    assert resposta.total == 0
+    assert resposta.aviso is not None and "maiores que zero" in resposta.aviso
+
+
+async def test_samd_coleta_antiga_gera_aviso(caminho_db: str) -> None:
+    with conectar(caminho_db) as conexao:
+        _inserir_dispositivo(conexao, numero="1", nome="SOFTWARE X", descricao="software")
+        conexao.execute("UPDATE dispositivos_medicos SET atualizado_em = now() - INTERVAL 5 DAY")
+
+    resposta = await buscar_samd_recentes(
+        dias=90,
+        apenas_com_ia=False,
+        caminho_db=caminho_db,
+        qwen_endpoint=ENDPOINT,
+        qwen_model=MODELO,
+        permitir_llm=False,
+    )
+    assert resposta.aviso is not None and "48 horas" in resposta.aviso
+
+
+# --- o servidor não grava; a CLI grava; reclassificação -----------------------
+
+
+def _llm_no_ar(usa_ia: bool = True) -> respx.Route:
+    respx.get(f"{ENDPOINT}/models").mock(return_value=httpx.Response(200, json={"data": []}))
+    return respx.post(f"{ENDPOINT}/chat/completions").mock(
+        return_value=_resposta_chat(
+            '{"usa_ia": %s, "confianca": 0.8, "justificativa": "cita software", '
+            '"termos_citados": ["software"]}' % ("true" if usa_ia else "false")
+        )
+    )
+
+
+def _classificacoes(caminho_db: str) -> list[tuple[object, ...]]:
+    with conectar(caminho_db, somente_leitura=True) as conexao:
+        return conexao.execute(
+            "SELECT numero_registro, justificativa, evidencia_confere FROM classificacoes_samd"
+        ).fetchall()
+
+
+@respx.mock
+async def test_stdio_classifica_mas_nao_grava(caminho_db: str) -> None:
+    """O stdio local não pode abrir a base servida para escrita."""
+    with conectar(caminho_db) as conexao:
+        _inserir_dispositivo(conexao, numero="1", nome="SOFTWARE X", descricao="software")
+    _llm_no_ar()
+
+    resposta = await buscar_samd_recentes(
+        dias=90,
+        apenas_com_ia=False,
+        caminho_db=caminho_db,
+        qwen_endpoint=ENDPOINT,
+        qwen_model=MODELO,
+    )
+
+    assert resposta.resultados[0].classificacao.origem == "llm"
+    assert resposta.aviso is not None and "não ficam gravados" in resposta.aviso
+    assert _classificacoes(caminho_db) == []
+
+
+@respx.mock
+async def test_gravar_cache_grava(caminho_db: str) -> None:
+    with conectar(caminho_db) as conexao:
+        _inserir_dispositivo(conexao, numero="1", nome="SOFTWARE X", descricao="software")
+    _llm_no_ar()
+
+    await buscar_samd_recentes(
+        dias=90,
+        apenas_com_ia=False,
+        caminho_db=caminho_db,
+        qwen_endpoint=ENDPOINT,
+        qwen_model=MODELO,
+        gravar_cache=True,
+    )
+
+    assert _classificacoes(caminho_db) == [("1", "cita software", True)]
+
+
+def _com_veredito_antigo(caminho_db: str, evidencia: bool | None) -> None:
+    with conectar(caminho_db) as conexao:
+        _inserir_dispositivo(conexao, numero="1", nome="SOFTWARE X", descricao="software")
+        gravar_classificacao(
+            conexao,
+            numero_registro="1",
+            usa_ia=False,
+            confianca=0.9,
+            justificativa="veredito antigo",
+            modelo=MODELO,
+            evidencia_confere=evidencia,
+        )
+
+
+@respx.mock
+async def test_reclassificar_refaz_veredito_sem_evidencia(caminho_db: str) -> None:
+    _com_veredito_antigo(caminho_db, evidencia=None)
+    rota_chat = _llm_no_ar()
+
+    resposta = await buscar_samd_recentes(
+        dias=90,
+        apenas_com_ia=False,
+        caminho_db=caminho_db,
+        qwen_endpoint=ENDPOINT,
+        qwen_model=MODELO,
+        gravar_cache=True,
+        reclassificar_sem_evidencia=True,
+    )
+
+    assert rota_chat.call_count == 1
+    assert resposta.resultados[0].classificacao.origem == "llm"
+    assert _classificacoes(caminho_db) == [("1", "cita software", True)]
+
+
+@respx.mock
+async def test_reclassificar_nao_refaz_quem_ja_foi_conferido(caminho_db: str) -> None:
+    """Cada veredito antigo é refeito uma vez: a opção pode ficar ligada no timer."""
+    _com_veredito_antigo(caminho_db, evidencia=True)
+    rota_chat = _llm_no_ar()
+
+    resposta = await buscar_samd_recentes(
+        dias=90,
+        apenas_com_ia=False,
+        caminho_db=caminho_db,
+        qwen_endpoint=ENDPOINT,
+        qwen_model=MODELO,
+        gravar_cache=True,
+        reclassificar_sem_evidencia=True,
+    )
+
+    assert rota_chat.call_count == 0
+    assert resposta.resultados[0].classificacao.origem == "cache"
+
+
+@respx.mock
+async def test_sem_reclassificar_mantem_veredito_antigo(caminho_db: str) -> None:
+    _com_veredito_antigo(caminho_db, evidencia=None)
+    rota_chat = _llm_no_ar()
+
+    resposta = await buscar_samd_recentes(
+        dias=90,
+        apenas_com_ia=False,
+        caminho_db=caminho_db,
+        qwen_endpoint=ENDPOINT,
+        qwen_model=MODELO,
+        gravar_cache=True,
+    )
+
+    assert rota_chat.call_count == 0
+    assert resposta.resultados[0].classificacao.origem == "cache"
+
+
+@respx.mock
+async def test_reclassificar_com_llm_fora_serve_o_antigo(caminho_db: str) -> None:
+    _com_veredito_antigo(caminho_db, evidencia=None)
+    respx.get(f"{ENDPOINT}/models").mock(side_effect=httpx.ConnectError("recusado"))
+
+    resposta = await buscar_samd_recentes(
+        dias=90,
+        apenas_com_ia=False,
+        caminho_db=caminho_db,
+        qwen_endpoint=ENDPOINT,
+        qwen_model=MODELO,
+        gravar_cache=True,
+        reclassificar_sem_evidencia=True,
+    )
+
+    assert resposta.resultados[0].classificacao.origem == "cache"
+    assert _classificacoes(caminho_db) == [("1", "veredito antigo", None)]

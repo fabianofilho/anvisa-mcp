@@ -1,4 +1,4 @@
-"""Entrypoint do servidor MCP (transporte stdio).
+"""Entrypoint do servidor MCP (stdio por padrão, HTTP no modo connector).
 
 Registra as duas tools. Nenhuma depende da outra ter rodado antes.
 """
@@ -33,38 +33,46 @@ logger = logging.getLogger(__name__)
 mcp = MCPServer("anvisa-mcp", version="0.1.0")
 
 # Tetos dos parametros das tools. O connector e publico: sem teto, uma chamada
-# com limite=1000000 devolve a base inteira (9 MB) e um cliente em laco vira
-# gigabytes por minuto de resposta.
+# com limite=100000 devolveu a base inteira (21 MB, 31.705 registros) e um
+# cliente em laco vira gigabytes por minuto de resposta.
 LIMITE_MAXIMO = 200
 DIAS_MAXIMO = 3650
 
 
 @mcp.tool()
 async def consultar_status_medicamento(
-    nome_ou_principio_ativo: str,
+    termo: str,
     limite: Annotated[int, Field(ge=1, le=LIMITE_MAXIMO)] = 20,
 ) -> RespostaMedicamentos:
     """Consulta o status do registro de um medicamento na Anvisa.
 
-    Busca por nome comercial ou princípio ativo e devolve os registros que casam,
-    com situação (válido, caducado, em análise), número de registro, data de
-    vencimento e empresa detentora.
+    Busca por nome comercial, princípio ativo ou número de registro e devolve os
+    registros que casam, com situação ('Ativo' ou 'Inativo', como o arquivo aberto
+    da Anvisa publica), número de registro, data de vencimento do registro,
+    empresa detentora e categoria.
 
     **Um princípio ativo comum tem centenas de registros**, um por detentor e
     apresentação: "dipirona" casa com 557. A resposta traz `total` (quantos casam
     na base inteira) e `retornados` (quantos vieram aqui). Quando `truncado` é
     True, não conte os resultados para dizer quantos existem, use `total`.
 
-    Quando a base local ainda não foi sincronizada, devolve dados de exemplo com
-    fonte='mock', nesse caso, não trate como informação regulatória.
+    `coletado_em` diz quando a base foi atualizada pela última vez a partir do
+    arquivo da Anvisa; acima de 48 horas a resposta traz aviso.
+
+    Termo sem correspondência devolve lista vazia. Só quando a base local não
+    existe, está vazia ou não pôde ser aberta a resposta vem com dados de exemplo
+    e fonte='mock': nesse caso, não trate como informação regulatória.
 
     Args:
-        nome_ou_principio_ativo: nome comercial ou princípio ativo, ex.: "dipirona".
-        limite: quantos registros trazer. Aumente para ver além dos primeiros.
+        termo: nome comercial ou princípio ativo (trecho, sem precisar de acento),
+            ex.: "dipirona", ou número de registro, com ou sem pontos,
+            ex.: "1.0582.0010". O número de 13 dígitos da apresentação também serve.
+        limite: quantos registros trazer, de 1 a 200. Aumente para ver além dos
+            primeiros.
     """
     config = carregar_config()
     return await _consultar_status_medicamento(
-        nome_ou_principio_ativo, caminho_db=str(config.duckdb_path), limite=limite
+        termo, caminho_db=str(config.duckdb_path), limite=limite
     )
 
 
@@ -77,17 +85,24 @@ async def buscar_samd_recentes(
 ) -> RespostaSaMD:
     """Lista dispositivos médicos Classe III/IV registrados recentemente na Anvisa.
 
-    Para cada registro, classifica se o produto usa IA ou aprendizado de máquina.
-    A Anvisa não publica esse campo: a classificação é heurística, feita por um LLM
-    local lendo o texto do registro, e cada item traz confiança e justificativa.
-    Não apresente o veredito como fato regulatório.
+    Cada registro traz um veredito sobre uso de IA ou aprendizado de máquina. A
+    Anvisa não publica esse campo: a classificação é heurística, feita por um LLM
+    local lendo o texto do registro, e cada item traz confiança, justificativa e
+    `origem` do veredito. Não apresente o veredito como fato regulatório.
+
+    O servidor não grava vereditos. No modo connector ele nem chama o LLM: serve
+    só o que a coleta diária já classificou (no deploy oficial, os registros dos
+    últimos 10 anos que passam no filtro de software). O que não está no cache vem
+    com origem='nao_classificado', que quer dizer "não se sabe", não "sem IA".
+    `coletado_em` diz quando a base foi atualizada pela última vez.
 
     Args:
-        dias: tamanho da janela, em dias, a contar de hoje.
+        dias: tamanho da janela, em dias, a contar de hoje (1 a 3650).
         apenas_com_ia: quando True, devolve só os classificados como usando IA.
-        limite: quantos registros analisar nesta chamada, dos mais recentes para trás.
-            Com `truncado=true` na resposta, sobraram registros no período que nem
-            foram olhados: a contagem da lista não serve para dizer quantos existem.
+        limite: quantos registros analisar nesta chamada (1 a 200), dos mais
+            recentes para trás. Com `truncado=true` na resposta, sobraram registros
+            no período que nem foram olhados: a contagem da lista não serve para
+            dizer quantos existem.
         apenas_software: quando True, analisa só registros cujo texto sugere software.
             SaMD é raro no registro (13 de 1.832 registros Classe III/IV do último ano
             mencionam software), então sem esse filtro a busca gasta as chamadas de LLM
@@ -106,6 +121,8 @@ async def buscar_samd_recentes(
         max_tentativas=config.qwen_max_tentativas,
         # No modo connector o servidor nao chama o LLM: serve o cache.
         permitir_llm=not config.modo_connector,
+        # Em nenhum modo o servidor escreve na base: quem grava e a CLI.
+        gravar_cache=False,
     )
 
 
