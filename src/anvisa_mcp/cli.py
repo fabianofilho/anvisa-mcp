@@ -28,32 +28,64 @@ def _configurar_log(nivel: str) -> None:
     )
 
 
-async def _classificar_pendentes(caminho_db: str, config: Config, *, dias: int) -> int:
+# Teto de registros avaliados por rodada de classificacao. Com filtro de software,
+# 10 anos de registros Classe III/IV dao cerca de 310 candidatos.
+LIMITE_CLASSIFICACAO = 5000
+
+
+async def _classificar_pendentes(
+    caminho_db: str, config: Config, *, dias: int, reclassificar: bool = False
+) -> int:
     """Passa o LLM nos dispositivos do período que ainda não têm veredito.
 
     Roda pela própria tool, em vez de duplicar a heurística: ela já sabe filtrar
     o que parece software, reaproveitar o cache e gravar o resultado. Aqui só
-    interessa o efeito colateral de encher o cache, então o retorno é a contagem.
+    interessa o efeito colateral de encher o cache, então o retorno é quantos
+    registros passaram pelo LLM nesta rodada.
+
+    Com ``reclassificar``, vereditos antigos sem checagem de evidência
+    (``evidencia_confere`` nulo) também voltam ao LLM. Depois de reclassificados
+    eles ganham o campo, então a opção pode ficar ligada no timer: cada veredito
+    antigo é refeito uma vez só.
     """
-    antes = _total_classificacoes(caminho_db)
-    await buscar_samd_recentes(
+    resposta = await buscar_samd_recentes(
         dias=dias,
         apenas_com_ia=False,
         caminho_db=caminho_db,
         permitir_llm=True,
+        gravar_cache=True,
+        reclassificar_sem_evidencia=reclassificar,
         qwen_endpoint=config.qwen_endpoint,
         qwen_model=config.qwen_model,
         timeout_segundos=config.qwen_timeout_segundos,
         max_tentativas=config.qwen_max_tentativas,
-        limite=500,
+        limite=LIMITE_CLASSIFICACAO,
     )
-    return _total_classificacoes(caminho_db) - antes
+    if resposta.fonte != "duckdb":
+        # Sem base, a tool devolve o exemplo; classifica-lo nao grava nada.
+        typer.secho(
+            f"nada classificado: a base em {caminho_db} não existe ou está vazia. "
+            "Rode 'anvisa-cli sync' antes.",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(code=1)
+    if resposta.truncado:
+        typer.secho(
+            f"janela com {resposta.total} candidatos, avaliados os {resposta.analisados} "
+            "mais recentes",
+            fg=typer.colors.YELLOW,
+        )
+    return sum(1 for item in resposta.resultados if item.classificacao.origem == "llm")
 
 
-def _total_classificacoes(caminho_db: str) -> int:
-    with conectar(caminho_db, somente_leitura=True) as conexao:
-        linha = conexao.execute("SELECT count(*) FROM classificacoes_samd").fetchone()
-    return int(linha[0]) if linha else 0
+def _publicar_ou_sair(config: Config, *, forcar: bool) -> None:
+    """Troca a base em construção pela servida, ou sai com código 1 se suspeita."""
+    try:
+        publicado = publicar(config.duckdb_path, forcar=forcar)
+    except BaseSuspeita as erro:
+        typer.secho(f"publicação recusada: {erro}", fg=typer.colors.RED)
+        raise typer.Exit(code=1) from erro
+    typer.secho(f"base publicada: {publicado}", fg=typer.colors.GREEN)
 
 
 @app.command()
@@ -83,6 +115,11 @@ def sync(
     ),
     dias_classificacao: int = typer.Option(
         365, help="Janela, em dias, dos dispositivos a classificar com --classificar"
+    ),
+    reclassificar: bool = typer.Option(
+        False,
+        "--reclassificar",
+        help="Com --classificar, refaz também os vereditos antigos sem checagem de evidência",
     ),
 ) -> None:
     """Roda o sync dos datasets públicos agora.
@@ -117,16 +154,13 @@ def sync(
                     typer.secho(f"{nome}: {erro}", fg=typer.colors.YELLOW)
 
         if classificar_ao_fim:
-            classificados = await _classificar_pendentes(str(alvo), config, dias=dias_classificacao)
+            classificados = await _classificar_pendentes(
+                str(alvo), config, dias=dias_classificacao, reclassificar=reclassificar
+            )
             typer.echo(f"classificados nesta coleta: {classificados}")
 
         if publicar_ao_fim:
-            try:
-                publicado = publicar(config.duckdb_path, forcar=forcar)
-            except BaseSuspeita as erro:
-                typer.secho(f"publicação recusada: {erro}", fg=typer.colors.RED)
-                raise typer.Exit(code=1) from erro
-            typer.secho(f"base publicada: {publicado}", fg=typer.colors.GREEN)
+            _publicar_ou_sair(config, forcar=forcar)
 
     asyncio.run(rodar())
 
@@ -134,22 +168,45 @@ def sync(
 @app.command()
 def classificar(
     dias: int = typer.Option(365, help="Janela, em dias, dos dispositivos a avaliar"),
+    publicar_ao_fim: bool = typer.Option(
+        False,
+        "--publicar",
+        help="Classifica numa cópia da base e troca por rename no fim (modo connector)",
+    ),
+    reclassificar: bool = typer.Option(
+        False,
+        "--reclassificar",
+        help="Refaz também os vereditos antigos sem checagem de evidência",
+    ),
+    forcar: bool = typer.Option(False, "--forcar", help="Publica mesmo se a base nova encolheu"),
 ) -> None:
     """Passa o LLM nos dispositivos ainda sem veredito de uso de IA.
 
-    Serve para encher o cache sem refazer a coleta. Num deploy de connector é
-    isto que produz as classificações: o servidor HTTP não chama o LLM, só serve
-    o que já está gravado. Quem já tem veredito não é reavaliado.
+    Serve para encher o cache sem refazer a coleta. Quem já tem veredito não é
+    reavaliado, exceto com ``--reclassificar``.
+
+    Com ``--publicar`` segue o mesmo caminho do sync: clona a base servida,
+    grava na cópia e troca no fim. Use sempre que houver um servidor lendo o
+    arquivo, porque escrever direto nele disputa o lock com as consultas.
     """
     config = carregar_config()
     _configurar_log(config.log_level)
-    novos = asyncio.run(_classificar_pendentes(str(config.duckdb_path), config, dias=dias))
-    typer.secho(f"classificados agora: {novos}", fg=typer.colors.GREEN)
+    alvo = clonar_para_construcao(config.duckdb_path) if publicar_ao_fim else config.duckdb_path
+
+    async def rodar() -> None:
+        novos = await _classificar_pendentes(
+            str(alvo), config, dias=dias, reclassificar=reclassificar
+        )
+        typer.secho(f"classificados agora: {novos}", fg=typer.colors.GREEN)
+        if publicar_ao_fim:
+            _publicar_ou_sair(config, forcar=forcar)
+
+    asyncio.run(rodar())
 
 
 @app.command()
 def medicamento(termo: str) -> None:
-    """Testa a tool de medicamentos fora do MCP."""
+    """Testa a tool de medicamentos fora do MCP (nome, princípio ativo ou registro)."""
     config = carregar_config()
     resposta = asyncio.run(consultar_status_medicamento(termo, caminho_db=str(config.duckdb_path)))
     typer.echo(resposta.model_dump_json(indent=2))
