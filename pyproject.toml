@@ -1,21 +1,27 @@
 [project]
 name = "anvisa-mcp"
 version = "0.1.0"
-description = "Servidor MCP para consulta regulatória da Anvisa: status de registro de medicamentos e detecção de SaMD com IA"
+description = "Servidor MCP para consulta regulatória da Anvisa: status de registro de medicamentos e dispositivos médicos recentes com classificação heurística de uso de IA"
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
-    "mcp>=1.2",
+    # O servidor importa mcp.server.mcpserver, que so existe a partir da 2.2.
+    "mcp>=2.2,<3",
     "httpx>=0.28",
     "beautifulsoup4>=4.12",
     "duckdb>=1.1",
-    "apscheduler>=3.10",
     "typer>=0.15",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
     "jinja2>=3.1",
     "python-dotenv>=1.0",
 ]
+
+[project.urls]
+Repository = "https://github.com/fabianofilho/anvisa-mcp"
+Changelog = "https://github.com/fabianofilho/anvisa-mcp/blob/main/CHANGELOG.md"
 
 [project.scripts]
 anvisa-mcp = "anvisa_mcp.mcp_server.server:main"
@@ -52,7 +58,3 @@ select = ["E", "F", "I", "UP", "B"]
 python_version = "3.12"
 strict = true
 files = ["src"]
-
-[[tool.mypy.overrides]]
-module = ["apscheduler.*"]
-ignore_missing_imports = true

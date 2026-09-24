@@ -10,9 +10,15 @@
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now anvisa-connector
 #
-# A coleta NAO roda aqui: ela e um servico separado que constroi a base ao
+# A coleta NAO roda aqui: ela e anvisa-sync.service, que constroi a base ao
 # lado e troca por rename. Este processo so le.
-#   anvisa-cli sync --publicar --classificar
+#
+# Risco conhecido: o ExecStart roda o codigo que estiver em ~/anvisa-mcp no
+# momento de cada (re)start, inclusive o automatico por Restart=always. Se
+# essa pasta for tambem a arvore de desenvolvimento, um checkout de outra
+# branch vai para producao no proximo restart. Para isolar, aponte os dois
+# caminhos abaixo para um checkout dedicado (por exemplo um git worktree fixo
+# na main) e mantenha DUCKDB_PATH na base publicada pelo sync.
 
 [Unit]
 Description=Servidor MCP do Anvisa em HTTP (modo connector)
@@ -29,8 +35,9 @@ Environment=HTTP_PATH=/mcp
 Environment=HTTP_STATELESS=true
 # Nome publico pelo qual o tunel ou proxy chama este servidor. Sem ele, o SDK
 # responde 421 (Invalid Host) a tudo que vier de fora, por protecao contra DNS
-# rebinding. Varios nomes separados por virgula.
-Environment=HTTP_HOSTS_PUBLICOS=
+# rebinding. Varios nomes separados por virgula. Este e o do connector oficial,
+# atras do Tailscale Funnel; troque pelo seu ao hospedar outra instancia.
+Environment=HTTP_HOSTS_PUBLICOS=mcp.tailf42a96.ts.net
 ExecStart=%h/.local/bin/uv --directory %h/anvisa-mcp run anvisa-mcp
 Restart=always
 RestartSec=5

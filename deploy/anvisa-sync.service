@@ -1,0 +1,35 @@
+# Coleta diaria dos dados abertos da Anvisa, disparada por anvisa-sync.timer.
+#
+# Baixa os dois CSVs (medicamentos e dispositivos), classifica com o LLM local
+# os dispositivos da janela que ainda nao tem veredito e publica a base por
+# troca atomica, sem nunca escrever no arquivo que o connector esta lendo.
+#
+#   --dias-classificacao 3650  cobre 10 anos de registros no cache de IA; fora
+#                              da janela o connector responde nao_classificado
+#   --reclassificar            refaz uma vez os vereditos antigos, feitos antes
+#                              da checagem de evidencia; depois nao custa nada
+#
+# Instalar (junto com o timer):
+#   cp deploy/anvisa-sync.service deploy/anvisa-sync.timer ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now anvisa-sync.timer
+#
+# Espera o repositorio em ~/anvisa-mcp e o uv em ~/.local/bin. Ajuste os
+# caminhos se o seu layout for outro.
+
+[Unit]
+Description=Sincroniza os dados abertos da Anvisa
+Documentation=https://github.com/fabianofilho/anvisa-mcp
+# Sem rede, o sync falha e o timer tenta de novo no dia seguinte.
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/anvisa-mcp
+ExecStart=%h/.local/bin/uv --directory %h/anvisa-mcp run anvisa-cli sync --publicar --classificar --dias-classificacao 3650 --reclassificar
+# Download dos CSVs mais uma chamada ao LLM por dispositivo sem veredito. A
+# primeira rodada com 10 anos e --reclassificar leva mais que as seguintes.
+TimeoutStartSec=3600
+# Nao deixa o sync competir com uso interativo da maquina.
+Nice=10
+IOSchedulingClass=idle

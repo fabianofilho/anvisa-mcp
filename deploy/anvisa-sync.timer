@@ -1,0 +1,21 @@
+# Agenda anvisa-sync.service uma vez por dia, de madrugada.
+#
+# O sync nao e agendado pelo codigo Python: este timer e o caminho oficial.
+# Instalacao em deploy/anvisa-sync.service.
+
+[Unit]
+Description=Agenda o sync diario dos dados abertos da Anvisa
+Documentation=https://github.com/fabianofilho/anvisa-mcp
+
+[Timer]
+OnCalendar=*-*-* 03:20:00
+# Espalha o disparo em ate 30 min. O horario fixo de madrugada evita disputar
+# o LLM local com outros projetos e com uso interativo; o RandomizedDelaySec
+# evita que varias maquinas rodando este projeto batam no portal da Anvisa no
+# mesmo minuto.
+RandomizedDelaySec=1800
+# Se a maquina estava desligada no horario, roda assim que ligar.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

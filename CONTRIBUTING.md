@@ -16,8 +16,9 @@ uv run ruff format .     # formatacao
 uv run mypy              # tipos
 ```
 
-Os testes rodam **offline**: as respostas das APIs externas estao mockadas com `respx`, e
-as fixtures foram capturadas de respostas reais. Nao e preciso rede nem LLM para testar.
+Os testes rodam **offline**: as respostas do portal da Anvisa e do LLM sao simuladas com
+`respx`, e as bases DuckDB sao criadas em diretorio temporario pelos proprios testes. Nao e
+preciso rede nem LLM para testar.
 
 ## Padrao de commit
 
@@ -33,8 +34,8 @@ Os dados abertos da Anvisa sao servicos publicos e gratuitos, mantidos com dinhe
 nao dimensionados para volume automatizado.
 
 - Nao rode o sync em loop, nem reduza o intervalo entre requisicoes para testar.
-- Para desenvolver e testar, use as fixtures do diretorio `tests/fixtures/` em vez de
-  bater na API de verdade.
-- Se precisar de uma coleta real durante o desenvolvimento, use os limites que a CLI
-  oferece (`--max-pdfs`, por exemplo).
+- Para desenvolver e testar, simule as respostas com `respx`, como os testes existentes
+  fazem, em vez de bater no portal de verdade.
+- Se precisar de uma coleta real durante o desenvolvimento, rode uma fonte so
+  (`anvisa-cli sync --fonte medicamentos`) e uma vez, nao em laco.
 - Um PR que aumente a frequencia de acesso as fontes precisa justificar por que.

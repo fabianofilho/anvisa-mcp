@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+import re
+from datetime import date, datetime, timedelta
 from typing import Any
 
 import duckdb
@@ -24,12 +25,56 @@ def _visto_na_ultima_coleta(tabela: str) -> str:
     return f"(atualizado_em >= (SELECT max(atualizado_em) FROM {tabela})) AS visto_na_ultima_coleta"
 
 
-# A mesma condição na busca e na contagem: se divergirem, o total deixa de
-# descrever o conjunto que foi paginado.
-_CASA_MEDICAMENTO = """
-    strip_accents(lower(nome_produto)) LIKE strip_accents(lower(?))
-    OR strip_accents(lower(coalesce(principio_ativo, ''))) LIKE strip_accents(lower(?))
-"""
+def _escapar_like(texto: str) -> str:
+    """Neutraliza os curingas do LIKE no termo digitado.
+
+    Sem isso, buscar "%" ou "_" casa com a base inteira (32.752 linhas numa
+    chamada), e um nome com sublinhado casaria qualquer caractere na posição.
+    """
+    return texto.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+_SO_PONTUACAO_DE_NUMERO = re.compile(r"^[\d.\-/\s]+$")
+
+
+def numeros_de_registro_candidatos(termo: str) -> list[str]:
+    """Números de registro que o termo pode estar citando.
+
+    A base guarda o número só com dígitos (9, para o produto). Quem pergunta
+    costuma copiar do rótulo com pontos ("1.0582.0010") ou o número de 13
+    dígitos da apresentação, cujos 9 primeiros são o registro do produto.
+    Termo com letra não é número de registro: devolve lista vazia.
+    """
+    if not _SO_PONTUACAO_DE_NUMERO.match(termo.strip()):
+        return []
+    digitos = re.sub(r"\D", "", termo)
+    if not digitos:
+        return []
+    candidatos = [digitos]
+    if len(digitos) == 13:
+        candidatos.append(digitos[:9])
+    return candidatos
+
+
+def _condicao_medicamento(termo: str) -> tuple[str, list[Any]]:
+    """A mesma condição na busca e na contagem.
+
+    Se divergirem, o total deixa de descrever o conjunto que foi paginado.
+    Casa por substring no nome comercial ou no princípio ativo e, quando o termo
+    tem cara de número, também pelo número de registro exato.
+    """
+    padrao = f"%{_escapar_like(termo.strip())}%"
+    condicao = (
+        "strip_accents(lower(nome_produto)) LIKE strip_accents(lower(?)) ESCAPE '\\' "
+        "OR strip_accents(lower(coalesce(principio_ativo, ''))) "
+        "LIKE strip_accents(lower(?)) ESCAPE '\\'"
+    )
+    parametros: list[Any] = [padrao, padrao]
+    numeros = numeros_de_registro_candidatos(termo)
+    if numeros:
+        condicao += f" OR numero_registro IN ({', '.join('?' for _ in numeros)})"
+        parametros.extend(numeros)
+    return condicao, parametros
 
 
 def buscar_medicamentos(
@@ -38,14 +83,14 @@ def buscar_medicamentos(
     *,
     limite: int = 20,
 ) -> list[dict[str, Any]]:
-    """Busca por nome comercial OU princípio ativo, tolerante a grafia.
+    """Busca por nome comercial, princípio ativo ou número de registro.
 
-    Casa por substring sem acento e sem caixa. Registros ativos vêm primeiro:
-    dois terços da base são inativos, e quem pergunta "qual o status de X"
-    normalmente quer saber do que ainda vale. Depois, nomes mais curtos, que
-    tendem a ser o produto em si e não uma apresentação específica.
+    Nome e princípio ativo casam por substring sem acento e sem caixa. Registros
+    ativos vêm primeiro: dois terços da base são inativos, e quem pergunta "qual
+    o status de X" normalmente quer saber do que ainda vale. Depois, nomes mais
+    curtos, que tendem a ser o produto em si e não uma apresentação específica.
     """
-    padrao = f"%{termo.strip()}%"
+    condicao, parametros = _condicao_medicamento(termo)
     return _para_dicts(
         conexao.execute(
             f"""
@@ -53,12 +98,12 @@ def buscar_medicamentos(
                    situacao, data_situacao, categoria,
                    {_visto_na_ultima_coleta("medicamentos")}
             FROM medicamentos
-            WHERE {_CASA_MEDICAMENTO}
+            WHERE {condicao}
             ORDER BY (lower(coalesce(situacao, '')) = 'ativo') DESC,
                      length(nome_produto), nome_produto
             LIMIT ?
             """,
-            [padrao, padrao, limite],
+            [*parametros, limite],
         )
     )
 
@@ -69,12 +114,41 @@ def contar_medicamentos(conexao: duckdb.DuckDBPyConnection, termo: str) -> int:
     Sem este número, a resposta diz "20 resultados" tanto para um termo com 20
     registros quanto para um com 557, e quem lê conclui que são 20 no país.
     """
-    padrao = f"%{termo.strip()}%"
+    condicao, parametros = _condicao_medicamento(termo)
     linha = conexao.execute(
-        f"SELECT count(*) FROM medicamentos WHERE {_CASA_MEDICAMENTO}",
-        [padrao, padrao],
+        f"SELECT count(*) FROM medicamentos WHERE {condicao}", parametros
     ).fetchone()
     return int(linha[0]) if linha else 0
+
+
+def total_de_linhas(conexao: duckdb.DuckDBPyConnection, tabela: str) -> int:
+    """Linhas da tabela, ou 0 quando ela nem existe.
+
+    Separa "a base nunca foi sincronizada" (dado de exemplo é aceitável, com
+    aviso) de "a base tem dados e nada casou" (a resposta certa é lista vazia).
+    """
+    try:
+        linha = conexao.execute(f"SELECT count(*) FROM {tabela}").fetchone()
+    except duckdb.CatalogException:
+        return 0
+    return int(linha[0]) if linha else 0
+
+
+def ultima_coleta(conexao: duckdb.DuckDBPyConnection, tabela: str) -> datetime | None:
+    """Quando a tabela foi atualizada pela última coleta.
+
+    É o ``max(atualizado_em)``: o upsert grava ``now()`` em toda linha presente
+    no arquivo, então esse máximo é a hora da coleta mais recente que trouxe
+    dados. Quem consulta precisa disso para saber se o sync parou.
+    """
+    try:
+        linha = conexao.execute(f"SELECT max(atualizado_em) FROM {tabela}").fetchone()
+    except duckdb.CatalogException:
+        return None
+    if not linha or linha[0] is None:
+        return None
+    valor = linha[0]
+    return valor if isinstance(valor, datetime) else None
 
 
 # Termos que indicam que o registro pode ser software. SaMD é raro: dos 1.832
@@ -216,6 +290,32 @@ def classificacao_em_cache(
             continue
         return linhas[0] if linhas else None
     return None
+
+
+def dispositivos_com_veredito_sem_evidencia(
+    conexao: duckdb.DuckDBPyConnection, *, limite: int
+) -> list[dict[str, Any]]:
+    """Dispositivos cujo veredito em cache é anterior à checagem de evidência.
+
+    Não passa pelo filtro de software nem por janela de datas: parte desses
+    vereditos veio de consultas com ``apenas_software=False``, e a varredura da
+    coleta, que usa o filtro, nunca os alcançaria.
+    """
+    return _para_dicts(
+        conexao.execute(
+            f"""
+            SELECT d.numero_registro, d.nome_produto, d.empresa_detentora, d.classe_risco,
+                   d.situacao, d.data_registro, d.descricao,
+                   {_visto_na_ultima_coleta("dispositivos_medicos")}
+            FROM classificacoes_samd c
+            JOIN dispositivos_medicos d USING (numero_registro)
+            WHERE c.evidencia_confere IS NULL
+            ORDER BY d.data_registro DESC, d.numero_registro
+            LIMIT ?
+            """,
+            [limite],
+        )
+    )
 
 
 def gravar_classificacao(
