@@ -45,7 +45,7 @@ class LimitadorPorOrigem:
 
     @property
     def motivo_ultima_recusa(self) -> str:
-        """'global' ou 'origem', para o log dizer qual teto foi batido."""
+        """'global', 'origem' ou 'tabela', para o log dizer qual teto foi batido."""
         return self._motivo
 
     _motivo = "origem"
@@ -66,9 +66,10 @@ class LimitadorPorOrigem:
             if len(self._janelas) >= MAX_ORIGENS:
                 self._podar(agora)
             if len(self._janelas) >= MAX_ORIGENS:
-                # Tabela cheia so de origens ativas: deixa passar em vez de
-                # recusar cliente legitimo por limitacao nossa de memoria.
-                return True
+                # Tabela cheia so de origens ativas: recusa. Deixar passar
+                # daria a quem gira origens um caminho sem limite nenhum.
+                self._motivo = "tabela"
+                return False
             janela = self._janelas[origem] = deque()
 
         while janela and agora - janela[0] > JANELA_SEGUNDOS:
@@ -100,12 +101,23 @@ def origem_da_requisicao(scope: dict[str, Any]) -> str:
 
     Atras de um proxy reverso, o IP do socket e o do proxy, todos os usuarios
     apareceriam como a mesma origem e um so consumiria o limite de todos.
+
+    So confia no cabecalho quando o socket vem de loopback (o proxy local), e
+    usa a entrada mais a direita, a que o proxy acrescentou. As da esquerda
+    vem do cliente: usa-las deixaria qualquer um trocar de origem a cada
+    requisicao e fugir do limite.
     """
+    cliente = scope.get("client")
+    ip_socket = str(cliente[0]) if cliente else "desconhecido"
+    if ip_socket not in _LOOPBACK:
+        return ip_socket
     cabecalhos: dict[str, str] = {
         k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers") or []
     }
     encaminhado = cabecalhos.get("x-forwarded-for")
     if encaminhado:
-        return encaminhado.split(",")[0].strip()
-    cliente = scope.get("client")
-    return str(cliente[0]) if cliente else "desconhecido"
+        return encaminhado.split(",")[-1].strip()
+    return ip_socket
+
+
+_LOOPBACK = {"127.0.0.1", "::1"}

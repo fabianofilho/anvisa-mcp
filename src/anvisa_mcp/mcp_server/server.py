@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import logging
 import sys
-from typing import Any
+from typing import Annotated, Any
 
 from mcp.server.mcpserver import MCPServer
+from pydantic import Field
 
 from anvisa_mcp.config import carregar_config
 from anvisa_mcp.mcp_server.capacidades import esconder_o_que_nao_existe
@@ -31,10 +32,17 @@ logger = logging.getLogger(__name__)
 
 mcp = MCPServer("anvisa-mcp", version="0.1.0")
 
+# Tetos dos parametros das tools. O connector e publico: sem teto, uma chamada
+# com limite=1000000 devolve a base inteira (9 MB) e um cliente em laco vira
+# gigabytes por minuto de resposta.
+LIMITE_MAXIMO = 200
+DIAS_MAXIMO = 3650
+
 
 @mcp.tool()
 async def consultar_status_medicamento(
-    nome_ou_principio_ativo: str, limite: int = 20
+    nome_ou_principio_ativo: str,
+    limite: Annotated[int, Field(ge=1, le=LIMITE_MAXIMO)] = 20,
 ) -> RespostaMedicamentos:
     """Consulta o status do registro de um medicamento na Anvisa.
 
@@ -62,10 +70,10 @@ async def consultar_status_medicamento(
 
 @mcp.tool()
 async def buscar_samd_recentes(
-    dias: int = 90,
+    dias: Annotated[int, Field(ge=1, le=DIAS_MAXIMO)] = 90,
     apenas_com_ia: bool = True,
     apenas_software: bool = True,
-    limite: int = 50,
+    limite: Annotated[int, Field(ge=1, le=LIMITE_MAXIMO)] = 50,
 ) -> RespostaSaMD:
     """Lista dispositivos médicos Classe III/IV registrados recentemente na Anvisa.
 

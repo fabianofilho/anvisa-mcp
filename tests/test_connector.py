@@ -185,11 +185,30 @@ def test_teto_global_protege_independente_da_origem() -> None:
 
 
 def test_origem_usa_forwarded_for_quando_ha_proxy() -> None:
+    """Atras do proxy local, vale a entrada que o proxy acrescentou (a ultima)."""
     scope: dict[str, Any] = {
-        "headers": [(b"x-forwarded-for", b"203.0.113.9, 10.0.0.1")],
-        "client": ("10.0.0.1", 5000),
+        "headers": [(b"x-forwarded-for", b"1.2.3.4, 203.0.113.9")],
+        "client": ("127.0.0.1", 5000),
     }
     assert origem_da_requisicao(scope) == "203.0.113.9"
+
+
+def test_origem_ignora_forwarded_for_de_quem_nao_e_proxy() -> None:
+    scope: dict[str, Any] = {
+        "headers": [(b"x-forwarded-for", b"203.0.113.9")],
+        "client": ("198.51.100.7", 5000),
+    }
+    assert origem_da_requisicao(scope) == "198.51.100.7"
+
+
+def test_tabela_cheia_recusa(monkeypatch: pytest.MonkeyPatch) -> None:
+    from anvisa_mcp.mcp_server import limite
+
+    monkeypatch.setattr(limite, "MAX_ORIGENS", 2)
+    limitador = LimitadorPorOrigem(limite_por_minuto=100)
+    assert limitador.permitir("a") and limitador.permitir("b")
+    assert not limitador.permitir("c")
+    assert limitador.motivo_ultima_recusa == "tabela"
 
 
 def test_clone_preserva_o_que_nao_vem_do_dataset(tmp_path: Path) -> None:
