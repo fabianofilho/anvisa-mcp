@@ -13,7 +13,11 @@ from anvisa_mcp.data.sources import FONTES, FonteNaoConfigurada
 from anvisa_mcp.data.sync import sync_dispositivos_medicos, sync_medicamentos
 from anvisa_mcp.llm.qwen_client import QwenClient
 from anvisa_mcp.mcp_server.tools.medicamentos import consultar_status_medicamento
-from anvisa_mcp.mcp_server.tools.samd import buscar_samd_recentes
+from anvisa_mcp.mcp_server.tools.samd import (
+    CacheNaoGravado,
+    buscar_samd_recentes,
+    refazer_vereditos_sem_evidencia,
+)
 from anvisa_mcp.store.db import conectar
 from anvisa_mcp.store.queries import ausentes_na_ultima_coleta
 from anvisa_mcp.store.troca import BaseSuspeita, clonar_para_construcao, publicar
@@ -41,13 +45,32 @@ async def _classificar_pendentes(
     Roda pela própria tool, em vez de duplicar a heurística: ela já sabe filtrar
     o que parece software, reaproveitar o cache e gravar o resultado. Aqui só
     interessa o efeito colateral de encher o cache, então o retorno é quantos
-    registros passaram pelo LLM nesta rodada.
+    registros passaram pelo LLM nesta rodada e foram gravados. Se a gravação
+    falhar, sai com código 1: contar como classificado o que não foi gravado
+    esconderia que todas as chamadas se perderam.
 
     Com ``reclassificar``, vereditos antigos sem checagem de evidência
-    (``evidencia_confere`` nulo) também voltam ao LLM. Depois de reclassificados
-    eles ganham o campo, então a opção pode ficar ligada no timer: cada veredito
+    (``evidencia_confere`` nulo) também voltam ao LLM, inclusive os que estão
+    fora da janela ou do filtro de software. Depois de reclassificados eles
+    ganham o campo, então a opção pode ficar ligada no timer: cada veredito
     antigo é refeito uma vez só.
     """
+    try:
+        return await _classificar_e_gravar(
+            caminho_db, config, dias=dias, reclassificar=reclassificar
+        )
+    except CacheNaoGravado as erro:
+        typer.secho(
+            f"classificação feita mas não gravada em {caminho_db}: {erro}. "
+            "Com o connector lendo a base, use --publicar.",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(code=1) from erro
+
+
+async def _classificar_e_gravar(
+    caminho_db: str, config: Config, *, dias: int, reclassificar: bool
+) -> int:
     resposta = await buscar_samd_recentes(
         dias=dias,
         apenas_com_ia=False,
@@ -75,7 +98,17 @@ async def _classificar_pendentes(
             "mais recentes",
             fg=typer.colors.YELLOW,
         )
-    return sum(1 for item in resposta.resultados if item.classificacao.origem == "llm")
+    classificados = sum(1 for item in resposta.resultados if item.classificacao.origem == "llm")
+    if reclassificar:
+        classificados += await refazer_vereditos_sem_evidencia(
+            caminho_db=caminho_db,
+            qwen_endpoint=config.qwen_endpoint,
+            qwen_model=config.qwen_model,
+            timeout_segundos=config.qwen_timeout_segundos,
+            max_tentativas=config.qwen_max_tentativas,
+            limite=LIMITE_CLASSIFICACAO,
+        )
+    return classificados
 
 
 def _publicar_ou_sair(config: Config, *, forcar: bool) -> None:

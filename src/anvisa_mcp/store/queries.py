@@ -292,6 +292,32 @@ def classificacao_em_cache(
     return None
 
 
+def dispositivos_com_veredito_sem_evidencia(
+    conexao: duckdb.DuckDBPyConnection, *, limite: int
+) -> list[dict[str, Any]]:
+    """Dispositivos cujo veredito em cache é anterior à checagem de evidência.
+
+    Não passa pelo filtro de software nem por janela de datas: parte desses
+    vereditos veio de consultas com ``apenas_software=False``, e a varredura da
+    coleta, que usa o filtro, nunca os alcançaria.
+    """
+    return _para_dicts(
+        conexao.execute(
+            f"""
+            SELECT d.numero_registro, d.nome_produto, d.empresa_detentora, d.classe_risco,
+                   d.situacao, d.data_registro, d.descricao,
+                   {_visto_na_ultima_coleta("dispositivos_medicos")}
+            FROM classificacoes_samd c
+            JOIN dispositivos_medicos d USING (numero_registro)
+            WHERE c.evidencia_confere IS NULL
+            ORDER BY d.data_registro DESC, d.numero_registro
+            LIMIT ?
+            """,
+            [limite],
+        )
+    )
+
+
 def gravar_classificacao(
     conexao: duckdb.DuckDBPyConnection,
     *,

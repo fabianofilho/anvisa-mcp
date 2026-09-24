@@ -23,6 +23,7 @@ from anvisa_mcp.store.db import BaseIndisponivel, conectar
 from anvisa_mcp.store.queries import (
     classificacao_em_cache,
     contar_dispositivos_no_periodo,
+    dispositivos_com_veredito_sem_evidencia,
     dispositivos_no_periodo,
     gravar_classificacao,
     total_de_linhas,
@@ -337,13 +338,23 @@ async def _classificar(
     )
 
 
-def _persistir_classificacoes(caminho_db: str, pendentes: list[dict[str, Any]]) -> None:
+class CacheNaoGravado(RuntimeError):
+    """Pediram para gravar o cache e a gravação não aconteceu."""
+
+
+def _persistir_classificacoes(
+    caminho_db: str, pendentes: list[dict[str, Any]], *, estrito: bool = False
+) -> None:
     """Grava o cache numa conexão de escrita própria.
 
     Só a CLI chama com ``gravar_cache=True``, e num deploy com connector ela
     escreve na base em construção, nunca na servida. A consulta roda em modo
-    leitura, e a escrita vem depois. Se a base estiver travada, o cache é
-    pulado: é otimização, não resposta.
+    leitura, e a escrita vem depois.
+
+    Sem ``estrito``, base travada só pula o cache: é otimização, não resposta.
+    Com ``estrito`` a falha sobe como ``CacheNaoGravado``, porque para a CLI o
+    cache é o próprio resultado: engolir o erro faria ela relatar sucesso com
+    todas as chamadas ao LLM perdidas.
     """
     if not pendentes:
         return
@@ -352,9 +363,51 @@ def _persistir_classificacoes(caminho_db: str, pendentes: list[dict[str, Any]]) 
             for item in pendentes:
                 gravar_classificacao(conexao, **item)
     except BaseIndisponivel as erro:
+        if estrito:
+            raise CacheNaoGravado(f"base ocupada: {erro}") from erro
         logger.warning("cache não gravado (base ocupada): %s", erro)
-    except Exception:  # noqa: BLE001 - cache é otimização, não pode derrubar a tool
+    except Exception as erro:  # noqa: BLE001 - cache é otimização, não pode derrubar a tool
+        if estrito:
+            raise CacheNaoGravado(str(erro)) from erro
         logger.exception("cache não gravado")
+
+
+async def refazer_vereditos_sem_evidencia(
+    *,
+    caminho_db: str,
+    qwen_endpoint: str,
+    qwen_model: str,
+    timeout_segundos: float = 120.0,
+    max_tentativas: int = 3,
+    limite: int = 5000,
+) -> int:
+    """Passa de novo no LLM todo veredito em cache sem checagem de evidência.
+
+    A varredura da coleta usa o filtro de software, e parte dos vereditos antigos
+    veio de consultas sem ele: esses nunca voltariam ao LLM por ali. Aqui a
+    seleção parte do próprio cache, sem filtro nem janela. Devolve quantos foram
+    refeitos e gravados; falha de gravação sobe como ``CacheNaoGravado``.
+    """
+    with conectar(caminho_db, somente_leitura=True) as conexao:
+        registros = dispositivos_com_veredito_sem_evidencia(conexao, limite=limite)
+        if not registros:
+            return 0
+        resposta, pendentes = await _montar_resposta(
+            conexao,
+            registros,
+            0,
+            False,
+            "duckdb",
+            gravar_cache=True,
+            reclassificar_sem_evidencia=True,
+            qwen_endpoint=qwen_endpoint,
+            qwen_model=qwen_model,
+            timeout_segundos=timeout_segundos,
+            max_tentativas=max_tentativas,
+            aviso="",
+        )
+    _persistir_classificacoes(caminho_db, pendentes, estrito=True)
+    return sum(1 for item in resposta.resultados if item.classificacao.origem == "llm")
 
 
 async def buscar_samd_recentes(
@@ -382,7 +435,8 @@ async def buscar_samd_recentes(
     ``gravar_cache`` é False no servidor MCP: ele nunca abre a base para escrita,
     para não disputar o lock com o connector nem escrever num arquivo que o sync
     está prestes a trocar. Quem grava é a CLI (``anvisa-cli classificar`` e
-    ``sync --classificar``).
+    ``sync --classificar``), e para ela uma gravação que falha levanta
+    ``CacheNaoGravado`` em vez de sumir num aviso de log.
     """
     if dias <= 0 or limite <= 0:
         return RespostaSaMD(
@@ -443,7 +497,7 @@ async def buscar_samd_recentes(
     if resposta is not None:
         # Fora do 'with': o DuckDB recusa uma conexão de escrita enquanto uma
         # de leitura ao mesmo arquivo está aberta no mesmo processo.
-        _persistir_classificacoes(caminho_db, pendentes)
+        _persistir_classificacoes(caminho_db, pendentes, estrito=gravar_cache)
         return resposta
 
     mock, _ = await _montar_resposta(

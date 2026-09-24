@@ -40,7 +40,10 @@ Primeira versão pública.
 - `anvisa-cli classificar` ganhou `--publicar` e `--forcar`, e segue o mesmo caminho de
   clone e troca atômica do sync.
 - `sync` e `classificar` ganharam `--reclassificar`, que refaz uma vez os vereditos
-  gravados antes da checagem de evidência.
+  gravados antes da checagem de evidência, inclusive os de fora da janela ou do filtro
+  de software.
+- `classificar` e `sync --classificar` saem com código 1 quando os vereditos não podem ser
+  gravados (base travada por outro processo), em vez de relatar sucesso.
 - O prompt de classificação foi para dentro do pacote (`anvisa_mcp/prompts`) e entra no
   wheel.
 - Removido o agendador interno (`agendar_syncs`, `SYNC_HORA_LOCAL`, dependência

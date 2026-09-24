@@ -133,3 +133,73 @@ def test_classificar_sem_base_falha_claro(ambiente: Path) -> None:
     resultado = CliRunner().invoke(app, ["classificar"])
     assert resultado.exit_code == 1
     assert "não existe ou está vazia" in resultado.output
+
+
+def _veredito_antigo_fora_do_filtro(caminho: Path) -> None:
+    """Classe III sem termo de software, com veredito anterior à checagem de evidência."""
+    with conectar(caminho) as conexao:
+        conexao.execute(
+            """
+            INSERT INTO dispositivos_medicos
+                (numero_registro, nome_produto, empresa_detentora, classe_risco,
+                 situacao, data_registro, descricao)
+            VALUES ('2', 'KIT CANULA BIOPSIA', 'E', 'III', 'VIGENTE', ?, 'canula metalica')
+            """,
+            [date.today() - timedelta(days=5)],
+        )
+        gravar_classificacao(
+            conexao,
+            numero_registro="2",
+            usa_ia=False,
+            confianca=0.9,
+            justificativa="veredito antigo",
+            modelo="m",
+            evidencia_confere=None,
+        )
+
+
+@respx.mock
+def test_reclassificar_alcanca_veredito_fora_do_filtro_de_software(ambiente: Path) -> None:
+    """Vereditos antigos gravados por consultas com apenas_software=False também são refeitos."""
+    _base_servida(ambiente, com_veredito=True, evidencia=None)
+    _veredito_antigo_fora_do_filtro(ambiente)
+    rota = _llm_no_ar()
+
+    resultado = CliRunner().invoke(
+        app, ["classificar", "--publicar", "--reclassificar", "--dias", "30"]
+    )
+
+    assert resultado.exit_code == 0, resultado.output
+    assert rota.call_count == 2
+    assert "classificados agora: 2" in resultado.output
+    assert all(evidencia is not None for _, _, evidencia in _vereditos(ambiente))
+
+
+@respx.mock
+def test_sem_reclassificar_nao_toca_veredito_fora_do_filtro(ambiente: Path) -> None:
+    _base_servida(ambiente, com_veredito=False)
+    _veredito_antigo_fora_do_filtro(ambiente)
+    rota = _llm_no_ar()
+
+    resultado = CliRunner().invoke(app, ["classificar", "--publicar", "--dias", "30"])
+
+    assert resultado.exit_code == 0, resultado.output
+    assert rota.call_count == 1
+    assert ("2", "veredito antigo", None) in _vereditos(ambiente)
+
+
+@respx.mock
+def test_classificar_sem_publicar_com_leitor_aberto_falha(ambiente: Path) -> None:
+    """Base travada pelo connector: a CLI não pode relatar sucesso sem ter gravado nada."""
+    _base_servida(ambiente, com_veredito=False)
+    _llm_no_ar()
+    leitor = duckdb.connect(str(ambiente), read_only=True)  # o connector
+    try:
+        resultado = CliRunner().invoke(app, ["classificar", "--dias", "30"])
+    finally:
+        leitor.close()
+
+    assert resultado.exit_code == 1, resultado.output
+    assert "classificados agora" not in resultado.output
+    assert "não gravada" in resultado.output
+    assert _vereditos(ambiente) == []

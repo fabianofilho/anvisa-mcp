@@ -305,7 +305,8 @@ systemd sobe de novo em 5 segundos.
 
 O connector só lê. Quem escreve é o sync, que roda separado e troca o arquivo por rename.
 `--reclassificar` refaz uma vez os vereditos gravados antes da checagem de evidência
-(`evidencia_confere` nulo); depois que todos passaram por ela, a opção não custa nada.
+(`evidencia_confere` nulo), inclusive os que estão fora da janela ou do filtro de software;
+depois que todos passaram por ela, a opção não custa nada.
 
 Não há aviso externo quando o sync falha: o connector segue servindo a base anterior, e a
 falha aparece em `journalctl --user -u anvisa-sync` e no `coletado_em` das respostas, que
@@ -341,7 +342,8 @@ uv run anvisa-cli sync --publicar --forcar           # aceita base menor que a s
 ```
 
 Com um connector lendo a base, use sempre `--publicar`, também no `classificar`: sem ele
-a CLI escreve direto no arquivo servido e disputa o lock com as consultas.
+a CLI tenta escrever direto no arquivo servido, o DuckDB recusa, e ela sai com código 1
+dizendo que a classificação não foi gravada.
 
 **A publicação é recusada quando a base nova encolhe mais de 10%.** Com a cópia acima, uma
 coleta interrompida já não produz base pequena: ela só deixa de atualizar. A checagem fica
@@ -399,7 +401,10 @@ que passam no filtro de software recebem veredito na coleta. No connector oficia
 é de 10 anos; numa instância com o padrão, 365 dias.
 
 **Parte dos vereditos antigos não passou pela checagem de evidência.** Eles vêm com
-`evidencia_confere: null` até o sync com `--reclassificar` refazê-los.
+`evidencia_confere: null` até o sync com `--reclassificar` refazê-los. Essa passada parte
+do próprio cache, sem janela nem filtro de software, então alcança também os vereditos
+gravados por consultas com `apenas_software=False`. Se o LLM estiver fora nessa hora, o
+veredito antigo continua servindo e volta na coleta seguinte.
 
 ## Privacidade
 
