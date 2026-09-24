@@ -2,9 +2,10 @@
 
 ## Como reportar
 
-Não abra issue pública para vulnerabilidade. Use o
-[aviso privado de segurança do GitHub](https://github.com/fabianofilho/anvisa-mcp/security/advisories/new)
-deste repositório, com os passos para reproduzir e o impacto que você observou.
+Não descreva a vulnerabilidade em issue pública. Abra uma
+[issue](https://github.com/fabianofilho/anvisa-mcp/issues/new) com o título
+"Contato de segurança", sem detalhes da falha, e o mantenedor responde combinando um
+canal privado. Nesse canal, mande os passos para reproduzir e o impacto observado.
 
 É um projeto mantido por uma pessoa: a resposta vem assim que possível, sem prazo
 garantido.
