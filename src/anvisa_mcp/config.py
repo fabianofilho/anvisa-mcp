@@ -20,10 +20,6 @@ class Config(BaseSettings):
     qwen_max_tentativas: int = Field(default=3, ge=1)
 
     duckdb_path: Path = Field(default=Path("./data/anvisa.duckdb"))
-    # Horário fixo, não intervalo: a GPU serializa as chamadas ao Qwen, então os
-    # syncs dos projetos são escalonados de madrugada para não competirem entre si
-    # nem com uso interativo. Este projeto fica às 03:20.
-    sync_hora_local: str = Field(default="03:20", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
     log_level: str = Field(default="INFO")
 
     # --- modo connector (servidor HTTP publico) ---

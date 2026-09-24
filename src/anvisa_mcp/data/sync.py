@@ -20,12 +20,6 @@ from anvisa_mcp.store.queries import ausentes_na_ultima_coleta
 
 logger = logging.getLogger(__name__)
 
-# Espalha o disparo dentro de meia hora. Num projeto publico isso nao e
-# detalhe: horario fixo resolve a concorrencia na maquina de quem roda, mas
-# cria concorrencia do outro lado se varias pessoas usarem o padrao do
-# .env.example e baterem no mesmo servidor no mesmo minuto.
-JITTER_SEGUNDOS = 1800
-
 TIMEOUT_DOWNLOAD = 300.0
 
 # Identifica o projeto para quem administra o portal de dados abertos, com link
@@ -174,31 +168,3 @@ async def sync_dispositivos_medicos(
 ) -> ResultadoSync:
     """Atualiza a tabela de dispositivos médicos."""
     return await _sync_fonte(conexao, DISPOSITIVOS_MEDICOS, client=client)
-
-
-def agendar_syncs(caminho_db: str, hora_local: str) -> Any:
-    """Agenda os dois syncs num horário fixo e devolve o scheduler já iniciado.
-
-    ``hora_local`` é ``HH:MM``. É horário fixo, e não intervalo relativo, porque a
-    GPU serializa as chamadas ao LLM: os syncs dos projetos locais são escalonados
-    de madrugada para não competirem entre si nem com uso interativo.
-    """
-    from apscheduler.schedulers.asyncio import AsyncIOScheduler
-
-    from anvisa_mcp.store.db import conectar
-
-    async def tarefa() -> None:
-        with conectar(caminho_db) as conexao:
-            for sync in (sync_medicamentos, sync_dispositivos_medicos):
-                try:
-                    await sync(conexao)
-                except Exception:  # noqa: BLE001 - o agendador não pode morrer por uma fonte
-                    logger.exception("sync falhou")
-
-    hora, minuto = (int(parte) for parte in hora_local.split(":"))
-    scheduler = AsyncIOScheduler()
-    # jitter: ver JITTER_SEGUNDOS no topo do modulo
-    scheduler.add_job(tarefa, "cron", hour=hora, minute=minuto, jitter=JITTER_SEGUNDOS)
-    scheduler.start()
-    logger.info("syncs agendados diariamente às %s", hora_local)
-    return scheduler
