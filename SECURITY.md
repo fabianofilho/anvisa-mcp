@@ -16,7 +16,7 @@ Dentro do escopo:
 
 - o código deste repositório (servidor MCP, CLI, sync, camada de armazenamento);
 - as units de `deploy/`;
-- o connector público em `https://mcp.tailf42a96.ts.net/anvisa/mcp`, que roda este código.
+- o connector público em `https://debian-f.tailf42a96.ts.net/anvisa/mcp`, que roda este código.
 
 Fora do escopo:
 

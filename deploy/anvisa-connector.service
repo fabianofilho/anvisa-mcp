@@ -37,7 +37,7 @@ Environment=HTTP_STATELESS=true
 # responde 421 (Invalid Host) a tudo que vier de fora, por protecao contra DNS
 # rebinding. Varios nomes separados por virgula. Este e o do connector oficial,
 # atras do Tailscale Funnel; troque pelo seu ao hospedar outra instancia.
-Environment=HTTP_HOSTS_PUBLICOS=mcp.tailf42a96.ts.net
+Environment=HTTP_HOSTS_PUBLICOS=debian-f.tailf42a96.ts.net
 ExecStart=%h/.local/bin/uv --directory %h/anvisa-mcp run anvisa-mcp
 Restart=always
 RestartSec=5

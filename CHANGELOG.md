@@ -3,6 +3,13 @@
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/). O projeto
 segue [versionamento semântico](https://semver.org/lang/pt-BR/).
 
+## [Não publicado]
+
+### Alterado
+
+- Connector público movido para `https://debian-f.tailf42a96.ts.net/anvisa/mcp`. O
+  endereço antigo, em `mcp.tailf42a96.ts.net`, deixou de responder.
+
 ## [0.1.0] - 2026-09-24
 
 Primeira versão pública.
