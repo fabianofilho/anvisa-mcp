@@ -22,7 +22,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
-# Abaixo disso o trecho nao tem palavra suficiente para ser evidencia de nada.
+# Abaixo disso o trecho não tem palavra suficiente para ser evidencia de nada.
 _FRACAO_MINIMA = 0.6
 _MIN_LETRAS = 4
 
