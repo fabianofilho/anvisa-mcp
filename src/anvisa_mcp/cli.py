@@ -32,7 +32,7 @@ def _configurar_log(nivel: str) -> None:
     )
 
 
-# Teto de registros avaliados por rodada de classificacao. Com filtro de software,
+# Teto de registros avaliados por rodada de classificação. Com filtro de software,
 # 10 anos de registros Classe III/IV dao cerca de 310 candidatos.
 LIMITE_CLASSIFICACAO = 5000
 
@@ -85,7 +85,7 @@ async def _classificar_e_gravar(
         limite=LIMITE_CLASSIFICACAO,
     )
     if resposta.fonte != "duckdb":
-        # Sem base, a tool devolve o exemplo; classifica-lo nao grava nada.
+        # Sem base, a tool devolve o exemplo; classifica-lo não grava nada.
         typer.secho(
             f"nada classificado: a base em {caminho_db} não existe ou está vazia. "
             "Rode 'anvisa-cli sync' antes.",
@@ -293,7 +293,7 @@ def schema() -> None:
         for (tabela,) in tabelas:
             linha = conexao.execute(f"SELECT count(*) FROM {tabela}").fetchone()
             contagens[tabela] = int(linha[0]) if linha else 0
-        # Quem nao veio na ultima coleta continua na base: o upsert nao remove.
+        # Quem não veio na última coleta continua na base: o upsert não remove.
         for tabela in ("medicamentos", "dispositivos_medicos"):
             if tabela in contagens:
                 contagens[f"{tabela}_ausentes_na_ultima_coleta"] = ausentes_na_ultima_coleta(

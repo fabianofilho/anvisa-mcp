@@ -1,23 +1,23 @@
 """Limitador de taxa para o modo connector.
 
-Um connector aberto pode ser chamado por qualquer usuario do Claude. Sem teto,
-uma unica sessao mal comportada consome a maquina que serve todo mundo.
+Um connector aberto pode ser chamado por qualquer usuário do Claude. Sem teto,
+uma única sessão mal comportada consome a máquina que serve todo mundo.
 
-**Por que sao dois limites, e nao um por IP.** Quando o Claude.ai chama um
-connector remoto, as requisicoes chegam dos IPs da Anthropic, nao do usuario
-final, a propria documentacao manda liberar as faixas deles no firewall. Um
-limite por IP colocaria todos os usuarios do Claude no mesmo balde: ou e
-restritivo e derruba todo mundo junto, ou e frouxo e nao protege nada.
+**Por que são dois limites, e não um por IP.** Quando o Claude.ai chama um
+connector remoto, as requisições chegam dos IPs da Anthropic, não do usuário
+final; a própria documentação manda liberar as faixas deles no firewall. Um
+limite por IP colocaria todos os usuários do Claude no mesmo balde: ou é
+restritivo e derruba todo mundo junto, ou é frouxo e não protege nada.
 
-Entao:
+Então:
 
-- o **limite global** e o que de fato protege a maquina, e e o teto que importa
-  para trafego vindo do Claude;
-- o **limite por origem** continua util contra quem chama o servidor direto,
-  fora do Claude, e fica alto o suficiente para nao atrapalhar o uso normal.
+- o **limite global** é o que de fato protege a máquina, e é o teto que importa
+  para tráfego vindo do Claude;
+- o **limite por origem** continua útil contra quem chama o servidor direto,
+  fora do Claude, e fica alto o suficiente para não atrapalhar o uso normal.
 
-Nenhum dos dois e defesa contra ataque distribuido. Sao para o caso comum de
-cliente em laco.
+Nenhum dos dois é defesa contra ataque distribuído. São para o caso comum de
+cliente em laço.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 JANELA_SEGUNDOS = 60.0
-# Acima disso, para de guardar IP novo: memoria nao pode crescer sem teto.
+# Acima disso, para de guardar IP novo: memória não pode crescer sem teto.
 MAX_ORIGENS = 10_000
 
 
@@ -51,7 +51,7 @@ class LimitadorPorOrigem:
     _motivo = "origem"
 
     def permitir(self, origem: str) -> bool:
-        """True se a requisicao cabe nos dois limites. Registra quando cabe."""
+        """True se a requisição cabe nos dois limites. Registra quando cabe."""
         agora = time.monotonic()
 
         if self._limite_global:
@@ -66,7 +66,7 @@ class LimitadorPorOrigem:
             if len(self._janelas) >= MAX_ORIGENS:
                 self._podar(agora)
             if len(self._janelas) >= MAX_ORIGENS:
-                # Tabela cheia so de origens ativas: recusa. Deixar passar
+                # Tabela cheia só de origens ativas: recusa. Deixar passar
                 # daria a quem gira origens um caminho sem limite nenhum.
                 self._motivo = "tabela"
                 return False
@@ -97,15 +97,15 @@ class LimitadorPorOrigem:
 
 
 def origem_da_requisicao(scope: dict[str, Any]) -> str:
-    """IP de origem, respeitando X-Forwarded-For quando ha proxy na frente.
+    """IP de origem, respeitando X-Forwarded-For quando há proxy na frente.
 
-    Atras de um proxy reverso, o IP do socket e o do proxy, todos os usuarios
-    apareceriam como a mesma origem e um so consumiria o limite de todos.
+    Atrás de um proxy reverso, o IP do socket é o do proxy: todos os usuários
+    apareceriam como a mesma origem e um só consumiria o limite de todos.
 
-    So confia no cabecalho quando o socket vem de loopback (o proxy local), e
-    usa a entrada mais a direita, a que o proxy acrescentou. As da esquerda
-    vem do cliente: usa-las deixaria qualquer um trocar de origem a cada
-    requisicao e fugir do limite.
+    Só confia no cabeçalho quando o socket vem de loopback (o proxy local), e
+    usa a entrada mais à direita, a que o proxy acrescentou. As da esquerda
+    vêm do cliente: usá-las deixaria qualquer um trocar de origem a cada
+    requisição e fugir do limite.
     """
     cliente = scope.get("client")
     ip_socket = str(cliente[0]) if cliente else "desconhecido"
