@@ -119,6 +119,10 @@ async def buscar_samd_recentes(
         qwen_model=config.qwen_model,
         timeout_segundos=config.qwen_timeout_segundos,
         max_tentativas=config.qwen_max_tentativas,
+        # None por padrão (CLASSIFICADOR_SAMD=qwen); com "jev", o Jev decide e o
+        # Qwen fica de fallback. Só três campos públicos da Anvisa saem da máquina.
+        # No modo connector não há LLM nenhum, então nem a chave é exigida.
+        jev=None if config.modo_connector else config.parametros_jev(),
         # No modo connector o servidor nao chama o LLM: serve o cache.
         permitir_llm=not config.modo_connector,
         # Em nenhum modo o servidor escreve na base: quem grava e a CLI.

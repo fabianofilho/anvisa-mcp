@@ -83,6 +83,7 @@ async def _classificar_e_gravar(
         timeout_segundos=config.qwen_timeout_segundos,
         max_tentativas=config.qwen_max_tentativas,
         limite=LIMITE_CLASSIFICACAO,
+        jev=config.parametros_jev(),
     )
     if resposta.fonte != "duckdb":
         # Sem base, a tool devolve o exemplo; classifica-lo nao grava nada.
@@ -107,6 +108,7 @@ async def _classificar_e_gravar(
             timeout_segundos=config.qwen_timeout_segundos,
             max_tentativas=config.qwen_max_tentativas,
             limite=LIMITE_CLASSIFICACAO,
+            jev=config.parametros_jev(),
         )
     return classificados
 
@@ -259,6 +261,7 @@ def samd(dias: int = 90, apenas_com_ia: bool = True, apenas_software: bool = Tru
             qwen_model=config.qwen_model,
             timeout_segundos=config.qwen_timeout_segundos,
             max_tentativas=config.qwen_max_tentativas,
+            jev=config.parametros_jev(),
         )
     )
     typer.echo(resposta.model_dump_json(indent=2))

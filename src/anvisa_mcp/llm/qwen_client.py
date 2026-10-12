@@ -36,6 +36,14 @@ class ClassificationResult(BaseModel):
             "pequeno descreve o produto de memória quando o registro é vago."
         ),
     )
+    modelo: str | None = Field(
+        default=None,
+        description=(
+            "Quem respondeu de fato. None quando o chamador já sabe (caminho do Qwen "
+            "sem fallback); preenchido pelo classificador com fallback, em que o modelo "
+            "varia por registro."
+        ),
+    )
 
 
 _JSON_NA_RESPOSTA = re.compile(r"\{.*\}", re.DOTALL)
@@ -75,6 +83,10 @@ class QwenClient:
         if self._client is not None and self._client_proprio:
             await self._client.aclose()
             self._client = None
+
+    def _modelo_para_cache(self) -> str:
+        """Nome do modelo como vai para a coluna ``modelo`` do cache."""
+        return self._modelo
 
     async def esta_vivo(self) -> bool:
         """True se o endpoint responde. Nunca levanta: serve para degradar com graça."""

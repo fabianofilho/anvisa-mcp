@@ -74,6 +74,9 @@ Edite o `.env` com o endereço do seu LLM:
 | `QWEN_MODEL` | `local-model` | llama.cpp e LM Studio aceitam qualquer nome; o Ollama exige o exato |
 | `DUCKDB_PATH` | `./data/anvisa.duckdb` | onde a base local fica |
 | `QWEN_TIMEOUT_SEGUNDOS` | `120` | timeout por chamada ao LLM |
+| `CLASSIFICADOR_SAMD` | `qwen` | `jev` liga o classificador na nuvem (ver [Classificador: Qwen ou Jev](#classificador-qwen-ou-jev)) |
+| `JEV_MODEL` | `jev-1.13.0` | versão pinada; o alias `jev-latest` pode mudar sem aviso |
+| `JEV_ARQUIVO_CHAVE` | `~/.config/jev-mcp/env` | arquivo com `TYPESAFE_API_KEY=...`, fora do repo; ou defina `TYPESAFE_API_KEY` no ambiente |
 
 Confirme que o LLM responde e baixe os dados:
 
@@ -93,6 +96,41 @@ Para classificar os dispositivos e gravar os vereditos na base:
 ```bash
 uv run anvisa-cli classificar --dias 365   # só o que ainda não tem veredito
 ```
+
+### Classificador: Qwen ou Jev
+
+Por padrão quem classifica é o LLM local (`CLASSIFICADOR_SAMD=qwen`) e nada sai da máquina.
+Com `CLASSIFICADOR_SAMD=jev`, quem decide é o [Jev](https://docs.typesafe.ai), modelo de
+decisão da TypeSafe: ele recebe os três campos públicos da Anvisa (nome técnico, nome
+comercial e fabricante) e devolve a probabilidade de o texto declarar ou sugerir IA. O Qwen
+continua como fallback, registro a registro, quando a nuvem falha. Numa avaliação preliminar
+com 27 registros públicos (avaliacoes-modelos, 2026-10-11, rótulos ainda não validados), os
+dois acertaram igual, mas o Jev respondeu em 0,24 s contra 3 s e com probabilidades que
+separam melhor os casos.
+
+O que muda e o que não muda:
+
+- Só muda quem decide. Cache, filtros, avisos e gravação são os mesmos. Trocar a flag não
+  refaz vereditos antigos: o cache é consultado antes de qualquer chamada.
+- `confianca` do Jev é `|2p - 1|`: 0 quando ele não sabe, perto de 1 quando tem certeza. Um
+  "sim" com `p` entre 0,5 e 0,75 sai com confiança abaixo de 0,5; trate como dúvida.
+- O cache grava em `modelo` quem respondeu de fato (`jev-1.13.0`, ou o Qwen quando houve
+  fallback), então dá para auditar depois. `evidencia_confere` fica `true`: o Jev não cita
+  trechos, e isso é registrado para o `--reclassificar` noturno não refazer o veredito.
+- Privacidade: só os três campos acima saem da máquina, e eles são públicos. Nada de
+  medicamentos, nada do connector. No modo connector o servidor continua sem chamar LLM
+  nenhum; quem chamaria o Jev é o `sync --classificar` da coleta, e isso é gasto na nuvem
+  de quem hospeda (frações de centavo por mil registros, pelo preço de 2026-10-11).
+- A chave fica fora do repo: `TYPESAFE_API_KEY` no ambiente ou uma linha
+  `TYPESAFE_API_KEY=...` em `~/.config/jev-mcp/env`. Com a flag ligada e sem chave, a CLI e o
+  servidor stdio falham alto em vez de classificar em silêncio com o Qwen. O connector não
+  exige a chave, porque não chama LLM nenhum. Chave inválida (401) não falha alto: o Jev
+  é dado como fora do ar e o Qwen responde tudo, com um aviso no log; a coluna `modelo` do
+  cache é onde isso aparece.
+- Nuvem fora do ar: se o Jev não responde na checagem inicial, a rodada vai direto ao Qwen,
+  sem esperar timeout por registro. Se ele cai no meio da rodada, três falhas seguidas
+  desligam o Jev pelo resto dela (um aviso no log). Não há retry em 429 ou 529: o registro
+  cai para o Qwen e a rodada segue.
 
 ### Ligando ao Claude Code
 

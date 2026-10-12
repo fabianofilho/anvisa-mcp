@@ -10,6 +10,8 @@ Independente da tool de medicamentos.
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import date, datetime
 from typing import Any, Literal
 
@@ -17,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from anvisa_mcp.llm.classify_samd import classificar_dispositivo
 from anvisa_mcp.llm.evidencia import verificar as verificar_evidencia
+from anvisa_mcp.llm.jev_client import ClassificadorComFallback, JevClient, ParametrosJev
 from anvisa_mcp.llm.qwen_client import QwenClient, QwenIndisponivel
 from anvisa_mcp.store.coleta import aviso_de_coleta_antiga
 from anvisa_mcp.store.db import BaseIndisponivel, conectar
@@ -234,7 +237,7 @@ def _validade(situacao: str | None) -> date | None:
 
 async def _classificar(
     conexao: Any,
-    cliente: QwenClient | None,
+    cliente: QwenClient | ClassificadorComFallback | None,
     registro: dict[str, Any],
     *,
     modelo: str,
@@ -324,7 +327,8 @@ async def _classificar(
                 "usa_ia": resultado.usa_ia,
                 "confianca": resultado.confianca,
                 "justificativa": resultado.justificativa,
-                "modelo": modelo,
+                # Com fallback, quem respondeu varia por registro; o resultado diz quem foi.
+                "modelo": resultado.modelo or modelo,
                 "evidencia_confere": evidencia.confere,
             }
         )
@@ -380,6 +384,7 @@ async def refazer_vereditos_sem_evidencia(
     timeout_segundos: float = 120.0,
     max_tentativas: int = 3,
     limite: int = 5000,
+    jev: ParametrosJev | None = None,
 ) -> int:
     """Passa de novo no LLM todo veredito em cache sem checagem de evidência.
 
@@ -404,6 +409,7 @@ async def refazer_vereditos_sem_evidencia(
             qwen_model=qwen_model,
             timeout_segundos=timeout_segundos,
             max_tentativas=max_tentativas,
+            jev=jev,
             aviso="",
         )
     _persistir_classificacoes(caminho_db, pendentes, estrito=True)
@@ -424,8 +430,13 @@ async def buscar_samd_recentes(
     timeout_segundos: float = 120.0,
     max_tentativas: int = 3,
     limite: int = 50,
+    jev: ParametrosJev | None = None,
 ) -> RespostaSaMD:
     """Dispositivos Classe III/IV registrados nos últimos ``dias``, com uso de IA classificado.
+
+    ``jev`` liga o classificador na nuvem (TypeSafe) com o Qwen local como
+    fallback; None, o padrão, mantém o Qwen sozinho. Só muda quem decide: cache,
+    filtros, avisos e gravação são os mesmos.
 
     ``apenas_software`` filtra por palavra-chave antes de gastar chamadas de LLM.
     Sem ele, os primeiros registros por data são quase sempre cânulas, parafusos e
@@ -481,6 +492,7 @@ async def buscar_samd_recentes(
                     qwen_model=qwen_model,
                     timeout_segundos=timeout_segundos,
                     max_tentativas=max_tentativas,
+                    jev=jev,
                     aviso=f"{aviso_base} {antiga}" if antiga else aviso_base,
                     total_no_periodo=total_no_periodo,
                 )
@@ -511,9 +523,38 @@ async def buscar_samd_recentes(
         qwen_model=qwen_model,
         timeout_segundos=timeout_segundos,
         max_tentativas=max_tentativas,
+        jev=jev,
         aviso=f"{motivo_mock} {AVISO_HEURISTICA}",
     )
     return mock
+
+
+@asynccontextmanager
+async def _abrir_classificador(
+    *,
+    jev: ParametrosJev | None,
+    qwen_endpoint: str,
+    qwen_model: str,
+    timeout_segundos: float,
+    max_tentativas: int,
+) -> AsyncIterator[QwenClient | ClassificadorComFallback | None]:
+    """Quem vai classificar nesta chamada, ou None se ninguém responde.
+
+    Sem ``jev`` é o Qwen local de sempre. Com ``jev``, o Jev decide e o Qwen fica
+    de reserva para os registros em que a nuvem falhar.
+    """
+    async with QwenClient(
+        qwen_endpoint,
+        qwen_model,
+        timeout_segundos=timeout_segundos,
+        max_tentativas=max_tentativas,
+    ) as qwen:
+        if jev is None:
+            yield qwen if await qwen.esta_vivo() else None
+            return
+        async with JevClient(jev) as cliente_jev:
+            classificador = ClassificadorComFallback(cliente_jev, qwen)
+            yield classificador if await classificador.esta_vivo() else None
 
 
 def _finalizar(
@@ -599,6 +640,7 @@ async def _montar_resposta(
     qwen_model: str,
     timeout_segundos: float,
     max_tentativas: int,
+    jev: ParametrosJev | None = None,
     aviso: str,
 ) -> tuple[RespostaSaMD, list[dict[str, Any]]]:
     pendentes: list[dict[str, Any]] = []
@@ -636,14 +678,13 @@ async def _montar_resposta(
             total_no_periodo=total_no_periodo,
         )
 
-    async with QwenClient(
-        qwen_endpoint,
-        qwen_model,
+    async with _abrir_classificador(
+        jev=jev,
+        qwen_endpoint=qwen_endpoint,
+        qwen_model=qwen_model,
         timeout_segundos=timeout_segundos,
         max_tentativas=max_tentativas,
-    ) as cliente:
-        vivo = await cliente.esta_vivo()
-        ativo = cliente if vivo else None
+    ) as ativo:
         itens = [
             DispositivoSaMD(
                 numero_registro=registro["numero_registro"],
