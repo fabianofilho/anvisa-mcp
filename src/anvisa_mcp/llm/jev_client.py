@@ -230,26 +230,50 @@ class ClassificadorComFallback:
     grava no cache. Assim dá para auditar depois quais vereditos vieram de cada um.
     """
 
+    # Falhas seguidas do Jev que desligam a nuvem pelo resto da rodada. Sem isto, uma
+    # queda no meio do sync noturno custaria um timeout de 30 s por registro, e a
+    # rodada de até 5000 registros levaria mais de um dia para cair no Qwen.
+    FALHAS_PARA_DESLIGAR = 3
+
     def __init__(self, jev: JevClient, qwen: QwenClient | None) -> None:
         self._jev = jev
         self._qwen = qwen
+        self._jev_vivo = False
         self._qwen_vivo = False
+        self._falhas_seguidas = 0
 
     async def esta_vivo(self) -> bool:
-        """Vivo se qualquer um dos dois responde. Memoriza o estado do Qwen."""
-        jev_vivo = await self._jev.esta_vivo()
+        """Vivo se qualquer um dos dois responde. Memoriza o estado dos dois."""
+        self._jev_vivo = await self._jev.esta_vivo()
         self._qwen_vivo = self._qwen is not None and await self._qwen.esta_vivo()
-        return jev_vivo or self._qwen_vivo
+        if not self._jev_vivo and self._qwen_vivo:
+            logger.warning("Jev fora do ar na checagem inicial; esta rodada usa só o Qwen local")
+        return self._jev_vivo or self._qwen_vivo
 
     async def classificar(
         self, *, nome: str, descricao: str, prompt_qwen: str
     ) -> ClassificationResult:
-        try:
-            return await self._jev.classificar(nome=nome, descricao=descricao)
-        except JevIndisponivel as erro:
-            if self._qwen is None or not self._qwen_vivo:
-                raise
-            logger.warning("Jev falhou (%s); usando o Qwen local neste registro", erro)
+        if self._jev_vivo:
+            try:
+                resultado = await self._jev.classificar(nome=nome, descricao=descricao)
+                self._falhas_seguidas = 0
+                return resultado
+            except JevIndisponivel as erro:
+                if self._qwen is None or not self._qwen_vivo:
+                    raise
+                self._falhas_seguidas += 1
+                if self._falhas_seguidas >= self.FALHAS_PARA_DESLIGAR:
+                    self._jev_vivo = False
+                    logger.warning(
+                        "Jev falhou %d vezes seguidas (%s); desligado pelo resto da rodada, "
+                        "o Qwen local responde o restante",
+                        self._falhas_seguidas,
+                        erro,
+                    )
+                else:
+                    logger.warning("Jev falhou (%s); usando o Qwen local neste registro", erro)
+        elif self._qwen is None or not self._qwen_vivo:
+            raise JevIndisponivel("Jev fora do ar e sem Qwen local para responder")
         texto = f"Nome do produto: {nome}\n\nDocumentação:\n{descricao}".strip()
         resultado = await self._qwen.classify(texto, prompt_qwen)
         return resultado.model_copy(update={"modelo": self._qwen._modelo_para_cache()})

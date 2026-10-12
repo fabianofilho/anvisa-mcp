@@ -168,6 +168,50 @@ async def test_sem_qwen_vivo_a_falha_do_jev_sobe() -> None:
             await classificador.classificar(nome="X", descricao="", prompt_qwen="p")
 
 
+@respx.mock
+async def test_jev_fora_do_ar_no_inicio_vai_direto_ao_qwen_sem_esperar() -> None:
+    """Sem isto, cada registro esperaria o timeout do Jev antes do fallback."""
+    respx.get(JEV_MODELOS).mock(side_effect=httpx.ConnectError("nuvem fora"))
+    rota_jev = respx.post(JEV)
+    respx.get(f"{QWEN}/models").mock(return_value=httpx.Response(200, json={"data": []}))
+    respx.post(f"{QWEN}/chat/completions").mock(
+        return_value=_resposta_chat(
+            '{"usa_ia": false, "confianca": 0.2, "justificativa": "x", "termos_citados": []}'
+        )
+    )
+    async with (
+        QwenClient(QWEN, QWEN_MODELO) as qwen,
+        JevClient(PARAMETROS) as jev,
+    ):
+        classificador = ClassificadorComFallback(jev, qwen)
+        assert await classificador.esta_vivo() is True
+        resultado = await classificador.classificar(nome="X", descricao="", prompt_qwen="p")
+    assert resultado.modelo == QWEN_MODELO
+    assert rota_jev.call_count == 0
+
+
+@respx.mock
+async def test_tres_falhas_seguidas_desligam_o_jev_pelo_resto_da_rodada() -> None:
+    respx.get(JEV_MODELOS).mock(return_value=httpx.Response(200, json={"models": []}))
+    rota_jev = respx.post(JEV).mock(return_value=httpx.Response(529))
+    respx.get(f"{QWEN}/models").mock(return_value=httpx.Response(200, json={"data": []}))
+    respx.post(f"{QWEN}/chat/completions").mock(
+        return_value=_resposta_chat(
+            '{"usa_ia": false, "confianca": 0.2, "justificativa": "x", "termos_citados": []}'
+        )
+    )
+    async with (
+        QwenClient(QWEN, QWEN_MODELO) as qwen,
+        JevClient(PARAMETROS) as jev,
+    ):
+        classificador = ClassificadorComFallback(jev, qwen)
+        await classificador.esta_vivo()
+        for _ in range(5):
+            resultado = await classificador.classificar(nome="X", descricao="", prompt_qwen="p")
+            assert resultado.modelo == QWEN_MODELO
+    assert rota_jev.call_count == 3
+
+
 # --- tool com a flag -------------------------------------------------------------
 
 

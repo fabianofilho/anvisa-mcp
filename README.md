@@ -103,9 +103,10 @@ Por padrão quem classifica é o LLM local (`CLASSIFICADOR_SAMD=qwen`) e nada sa
 Com `CLASSIFICADOR_SAMD=jev`, quem decide é o [Jev](https://docs.typesafe.ai), modelo de
 decisão da TypeSafe: ele recebe os três campos públicos da Anvisa (nome técnico, nome
 comercial e fabricante) e devolve a probabilidade de o texto declarar ou sugerir IA. O Qwen
-continua como fallback, registro a registro, quando a nuvem falha. Numa comparação com 27
-registros públicos (avaliacoes-modelos, 2026-10-11), os dois acertaram igual, mas o Jev
-respondeu em 0,24 s contra 3 s e com probabilidades que separam melhor os casos.
+continua como fallback, registro a registro, quando a nuvem falha. Numa avaliação preliminar
+com 27 registros públicos (avaliacoes-modelos, 2026-10-11, rótulos ainda não validados), os
+dois acertaram igual, mas o Jev respondeu em 0,24 s contra 3 s e com probabilidades que
+separam melhor os casos.
 
 O que muda e o que não muda:
 
@@ -122,7 +123,14 @@ O que muda e o que não muda:
   de quem hospeda (frações de centavo por mil registros, pelo preço de 2026-10-11).
 - A chave fica fora do repo: `TYPESAFE_API_KEY` no ambiente ou uma linha
   `TYPESAFE_API_KEY=...` em `~/.config/jev-mcp/env`. Com a flag ligada e sem chave, a CLI e o
-  servidor falham alto em vez de classificar em silêncio com o Qwen.
+  servidor stdio falham alto em vez de classificar em silêncio com o Qwen. O connector não
+  exige a chave, porque não chama LLM nenhum. Chave inválida (401) não falha alto: o Jev
+  é dado como fora do ar e o Qwen responde tudo, com um aviso no log; a coluna `modelo` do
+  cache é onde isso aparece.
+- Nuvem fora do ar: se o Jev não responde na checagem inicial, a rodada vai direto ao Qwen,
+  sem esperar timeout por registro. Se ele cai no meio da rodada, três falhas seguidas
+  desligam o Jev pelo resto dela (um aviso no log). Não há retry em 429 ou 529: o registro
+  cai para o Qwen e a rodada segue.
 
 ### Ligando ao Claude Code
 
