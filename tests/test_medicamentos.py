@@ -277,7 +277,10 @@ async def test_resposta_traz_coletado_em(caminho_db: str) -> None:
     r = await consultar_status_medicamento("dipirona", caminho_db=caminho_db)
 
     assert r.coletado_em is not None
-    assert datetime.now() - r.coletado_em < timedelta(minutes=5)
+    # Com fuso dos dois lados: coletado_em passou a ser RFC 3339, e subtrair
+    # misturado com um now() ingenuo levanta TypeError.
+    assert r.coletado_em.tzinfo is not None
+    assert datetime.now().astimezone() - r.coletado_em < timedelta(minutes=5)
     assert r.aviso is None
 
 
@@ -304,3 +307,43 @@ def test_aviso_de_coleta_antiga() -> None:
     assert aviso_de_coleta_antiga(agora - timedelta(hours=47), agora=agora) is None
     aviso = aviso_de_coleta_antiga(agora - timedelta(hours=49), agora=agora)
     assert aviso is not None and "22/09/2026 11:00" in aviso
+
+
+# --- coletado_em tem que ser RFC 3339 -------------------------------------
+#
+# Em 12/10/2026 as DUAS tools deste servidor falhavam em qualquer cliente MCP
+# que valide a saída contra o schema, inclusive o Claude:
+#
+#   data/coletado_em must match format "date-time"
+#
+# O servidor devolvia 2026-10-11T03:47:35.495296, sem fuso. O campo é declarado
+# como date-time, que exige offset. O conector público respondia igual: quem
+# chamava por curl via o dado, quem chamava por um cliente que confere recebia
+# erro. Não apareceu antes porque ninguém tinha chamado a tool por um cliente
+# que valida.
+
+
+def test_ultima_coleta_devolve_data_com_fuso(db) -> None:  # type: ignore[no-untyped-def]
+    """Sem fuso, o campo não é RFC 3339 e o cliente MCP recusa a resposta inteira."""
+    from anvisa_mcp.store.queries import ultima_coleta
+
+    _inserir(db, numero_registro="1", nome_produto="DIPIRONA", situacao="Ativo")
+    quando = ultima_coleta(db, "medicamentos")
+
+    assert quando is not None
+    assert quando.tzinfo is not None, "datetime ingênuo não passa no schema date-time"
+    assert quando.utcoffset() is not None
+
+
+def test_coletado_em_serializa_no_formato_que_o_schema_exige(db) -> None:  # type: ignore[no-untyped-def]
+    """O teste que reproduz a falha: a string tem que trazer o offset."""
+    import re
+
+    from anvisa_mcp.store.queries import ultima_coleta
+
+    _inserir(db, numero_registro="1", nome_produto="DIPIRONA", situacao="Ativo")
+    quando = ultima_coleta(db, "medicamentos")
+
+    assert quando is not None
+    texto = quando.isoformat()
+    assert re.search(r"(Z|[+-]\d{2}:\d{2})$", texto), f"sem offset: {texto}"
