@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 TIMEOUT_DOWNLOAD = 300.0
 
 # Identifica o projeto para quem administra o portal de dados abertos, com link
-# para o repositorio. Antes daqui o coletor usava o User-Agent default do httpx,
+# para o repositório. Antes daqui o coletor usava o User-Agent default do httpx,
 # anonimo, ma cidadania para um projeto publico que consulta servidor do governo.
 USER_AGENT = "anvisa-mcp/0.1 (+https://github.com/fabianofilho/anvisa-mcp)"
 
@@ -134,8 +134,8 @@ async def _sync_fonte(
     resultado = _gravar(conexao, fonte.chave, registros)
     ausentes = ausentes_na_ultima_coleta(conexao, fonte.chave)
     if ausentes:
-        # Nao e erro: e a Anvisa tendo removido registros da publicacao. Mas a
-        # base guarda o ultimo estado visto, entao precisa ficar no log.
+        # Não e erro: e a Anvisa tendo removido registros da publicação. Mas a
+        # base guarda o último estado visto, então precisa ficar no log.
         logger.warning(
             "%s: %d registro(s) da base nao vieram neste arquivo; "
             "seguem marcados com visto_na_ultima_coleta=false",

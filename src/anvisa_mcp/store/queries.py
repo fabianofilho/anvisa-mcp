@@ -140,6 +140,17 @@ def ultima_coleta(conexao: duckdb.DuckDBPyConnection, tabela: str) -> datetime |
     É o ``max(atualizado_em)``: o upsert grava ``now()`` em toda linha presente
     no arquivo, então esse máximo é a hora da coleta mais recente que trouxe
     dados. Quem consulta precisa disso para saber se o sync parou.
+
+    **Volta com fuso.** O DuckDB guarda ``TIMESTAMP`` sem fuso e devolve um
+    datetime ingênuo. O campo ``coletado_em`` das tools é declarado como
+    ``date-time``, que é RFC 3339 e exige offset, então um datetime ingênuo faz
+    o cliente MCP recusar a resposta inteira, não só esse campo. Em 12/10/2026
+    as duas tools deste servidor estavam assim, e o conector público também: por
+    curl o dado aparecia, por um cliente que valida vinha erro.
+
+    O offset anexado é o da máquina, e não UTC, porque o valor É hora local: ele
+    nasce de ``current_timestamp`` na mesma máquina que serve. Carimbar UTC aqui
+    erraria por três horas e seria pior que o erro de formato.
     """
     try:
         linha = conexao.execute(f"SELECT max(atualizado_em) FROM {tabela}").fetchone()
@@ -148,7 +159,9 @@ def ultima_coleta(conexao: duckdb.DuckDBPyConnection, tabela: str) -> datetime |
     if not linha or linha[0] is None:
         return None
     valor = linha[0]
-    return valor if isinstance(valor, datetime) else None
+    if not isinstance(valor, datetime):
+        return None
+    return valor.astimezone() if valor.tzinfo is None else valor
 
 
 # Termos que indicam que o registro pode ser software. SaMD é raro: dos 1.832

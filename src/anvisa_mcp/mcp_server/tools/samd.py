@@ -303,8 +303,8 @@ async def _classificar(
             origem="indisponivel",
         )
 
-    # O modelo aponta os trechos em que se baseou, e eles sao conferidos contra
-    # o registro: sem isso, ele descreve o produto de memoria quando o texto e
+    # O modelo aponta os trechos em que se baseou, e eles são conferidos contra
+    # o registro: sem isso, ele descreve o produto de memória quando o texto e
     # vago, e a justificativa deixa de servir de controle.
     evidencia = verificar_evidencia(
         resultado.termos_citados,
@@ -604,7 +604,7 @@ async def _montar_resposta(
     pendentes: list[dict[str, Any]] = []
     if not permitir_llm:
         # Modo connector: nenhuma chamada ao LLM e nenhuma escrita na base. Quem
-        # hospeda nao paga inferencia por todo mundo, e o DuckDB nao aceita
+        # hospeda não paga inferencia por todo mundo, e o DuckDB não aceita
         # escritor enquanto o servidor le.
         itens = [
             DispositivoSaMD(

@@ -62,8 +62,8 @@ CREATE INDEX IF NOT EXISTS idx_disp_data ON dispositivos_medicos (data_registro)
 
 
 # Colunas acrescentadas depois que bases ja existiam. Aplicadas uma a uma para
-# nao exigir recoleta: a base de producao tem classificacao que custou uma
-# chamada de LLM por linha e nao se joga fora para mudar schema.
+# não exigir recoleta: a base de producao tem classificação que custou uma
+# chamada de LLM por linha e não se joga fora para mudar schema.
 _COLUNAS_NOVAS = (("classificacoes_samd", "evidencia_confere", "BOOLEAN"),)
 
 
