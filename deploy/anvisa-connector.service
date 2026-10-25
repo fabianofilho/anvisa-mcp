@@ -37,8 +37,14 @@ Environment=HTTP_STATELESS=true
 # responde 421 (Invalid Host) a tudo que vier de fora, por protecao contra DNS
 # rebinding. Varios nomes separados por virgula. Este e o do connector oficial,
 # atras do Tailscale Funnel; troque pelo seu ao hospedar outra instancia.
-Environment=HTTP_HOSTS_PUBLICOS=debian-f.tailf42a96.ts.net
+# Host publico desde 25/10/2026: mcp.iamed.cc (Traefik da VPS, pela tailnet). O nome
+# debian-f.tailf42a96.ts.net segue valido dentro da tailnet (tailscale serve); o Funnel acabou.
+Environment=HTTP_HOSTS_PUBLICOS=debian-f.tailf42a96.ts.net,mcp.iamed.cc
 ExecStart=%h/.local/bin/uv --directory %h/anvisa-mcp run anvisa-mcp
+
+# O uvicorn espera as conexoes abertas (SSE do claude.ai) e so saia no SIGKILL dos 90 s
+# padrao (medido em 25/10/2026). Servidor sem estado: 15 s bastam para um restart.
+TimeoutStopSec=15
 Restart=always
 RestartSec=5
 ProtectSystem=strict

@@ -22,7 +22,7 @@ Há uma instância rodando este código, aberta, que dá para adicionar ao Claud
 custom connector sem instalar nada:
 
 ```
-https://debian-f.tailf42a96.ts.net/anvisa/mcp
+https://mcp.iamed.cc/anvisa/mcp
 ```
 
 Condições de uso:

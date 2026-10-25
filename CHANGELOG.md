@@ -7,6 +7,10 @@ segue [versionamento semântico](https://semver.org/lang/pt-BR/).
 
 ### Alterado
 
+- Connector público movido para `https://mcp.iamed.cc/anvisa/mcp` (25/10/2026): o Tailscale
+  Funnel em `debian-f.tailf42a96.ts.net` foi desligado. O host novo chega ao mesmo servidor
+  pelo Traefik da VPS, pela tailnet.
+
 - Connector público movido para `https://debian-f.tailf42a96.ts.net/anvisa/mcp`. O
   endereço antigo, em `mcp.tailf42a96.ts.net`, deixou de responder.
 
