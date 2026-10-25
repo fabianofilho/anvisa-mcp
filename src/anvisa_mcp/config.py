@@ -82,31 +82,31 @@ class Config(BaseSettings):
     http_path: str = Field(default="/mcp")
     http_stateless: bool = Field(default=True)
     # O teto global protege a maquina: o trafego do Claude chega dos IPs da
-    # Anthropic, entao limitar so por IP juntaria todos os usuarios num balde.
+    # Anthropic, então limitar so por IP juntaria todos os usuários num balde.
     http_limite_global_por_minuto: int = Field(default=1200, ge=1)
     http_limite_por_minuto: int = Field(default=600, ge=1)
     # Nomes pelos quais o servidor aceita ser chamado, separados por virgula.
-    # Vazio significa so loopback. O SDK valida o cabecalho Host contra esta
+    # Vazio significa so loopback. O SDK valida o cabeçalho Host contra esta
     # lista e responde 421 fora dela: e defesa contra DNS rebinding, onde um
-    # site qualquer faz o navegador da vitima falar com um servidor local. Atras
-    # de um proxy ou tunel, o Host que chega e o nome publico, entao ele precisa
+    # site qualquer faz o navegador da vitima falar com um servidor local. Atrás
+    # de um proxy ou tunel, o Host que chega e o nome publico, então ele precisa
     # constar aqui; a alternativa seria desligar a checagem, que e pior.
     http_hosts_publicos: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
     @field_validator("http_hosts_publicos", mode="before")
     @classmethod
     def _dividir_hosts(cls, valor: object) -> object:
-        """Aceita "a.exemplo,b.exemplo" do .env, nao so lista JSON."""
+        """Aceita "a.exemplo,b.exemplo" do .env, não so lista JSON."""
         if isinstance(valor, str):
             return [p.strip() for p in valor.split(",") if p.strip()]
         return valor
 
     @property
     def modo_connector(self) -> bool:
-        """No modo connector o servidor nao chama o LLM nem escreve na base.
+        """No modo connector o servidor não chama o LLM nem escreve na base.
 
         Classificar sob demanda exigiria inferencia paga por quem hospeda e
-        escrita no arquivo que o proprio servidor le, e o DuckDB recusa abrir
+        escrita no arquivo que o próprio servidor le, e o DuckDB recusa abrir
         para escrita com um leitor aberto. As classificacoes vem do cache, que
         e construido na coleta, fora do servidor.
         """

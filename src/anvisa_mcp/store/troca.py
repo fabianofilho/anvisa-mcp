@@ -39,10 +39,10 @@ def caminho_em_construcao(destino: Path | str) -> Path:
 class BaseSuspeita(RuntimeError):
     """A base nova encolheu demais em relação à servida.
 
-    Coleta interrompida por rede ruim, portal respondendo truncado ou teste com
-    ``--max-paginas`` produzem uma base pequena e aparentemente válida. Publicar
-    isso substitui a base boa em silêncio, e num connector isso chega a todo
-    mundo que consulta.
+    Coleta interrompida por rede ruim, fonte respondendo truncado ou teste com
+    ``--fonte`` limitando a coleta a uma fonte produzem uma base pequena e aparentemente válida.
+    Publicar isso substitui a base boa em silêncio, e num connector isso chega
+    a todo mundo que consulta.
     """
 
 
