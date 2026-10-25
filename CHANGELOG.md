@@ -5,6 +5,17 @@ segue [versionamento semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não publicado]
 
+### Adicionado
+
+- Classificador de SaMD alternativo, atrás de flag: `CLASSIFICADOR_SAMD=jev` faz o Jev
+  (modelo de decisão da TypeSafe, na nuvem) responder "o texto declara ou sugere IA?" com
+  probabilidade calibrada, e o Qwen local fica como fallback por registro. O padrão continua
+  `qwen`, sem nenhuma chamada externa. Só os três campos públicos da Anvisa (nome técnico,
+  nome comercial e fabricante) saem da máquina. A chave vem de `TYPESAFE_API_KEY` no
+  ambiente ou de `~/.config/jev-mcp/env`, nunca do `.env` do projeto. O cache grava em
+  `modelo` quem respondeu de fato (`jev-1.13.0` ou o Qwen do fallback). Motivação e números
+  em avaliacoes-modelos, relatórios `2026-10-11*-jev-vs-qwen-samd.md`.
+
 ### Alterado
 
 - Connector público movido para `https://debian-f.tailf42a96.ts.net/anvisa/mcp`. O

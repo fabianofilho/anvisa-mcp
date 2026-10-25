@@ -37,17 +37,17 @@ logger = logging.getLogger(__name__)
 # com escudo do registro sanitário no visor. Em data URI, e não URL: o cliente precisa ver o
 # ícone antes de autenticar, e o endereço do Funnel é um só para todos os servidores.
 ICONE = [
-    Icon(
-        src="data:image/svg+xml;base64,"
-        + base64.b64encode((Path(__file__).parent / "icone.svg").read_bytes()).decode(),
-        mimeType="image/svg+xml",
-        sizes=["any"],
-    )
+Icon(
+    src="data:image/svg+xml;base64,"
+    + base64.b64encode((Path(__file__).parent / "icone.svg").read_bytes()).decode(),
+    mimeType="image/svg+xml",
+    sizes=["any"],
+)
 ]
 
 mcp = MCPServer("anvisa-mcp", version="0.1.0", icons=ICONE)
 
-# Tetos dos parâmetros das tools. O connector e publico: sem teto, uma chamada
+# Tetos dos parametros das tools. O connector e publico: sem teto, uma chamada
 # com limite=100000 devolveu a base inteira (21 MB, 31.705 registros) e um
 # cliente em laco vira gigabytes por minuto de resposta.
 LIMITE_MAXIMO = 200
@@ -134,7 +134,11 @@ async def buscar_samd_recentes(
         qwen_model=config.qwen_model,
         timeout_segundos=config.qwen_timeout_segundos,
         max_tentativas=config.qwen_max_tentativas,
-        # No modo connector o servidor não chama o LLM: serve o cache.
+        # None por padrão (CLASSIFICADOR_SAMD=qwen); com "jev", o Jev decide e o
+        # Qwen fica de fallback. Só três campos públicos da Anvisa saem da máquina.
+        # No modo connector não há LLM nenhum, então nem a chave é exigida.
+        jev=None if config.modo_connector else config.parametros_jev(),
+        # No modo connector o servidor nao chama o LLM: serve o cache.
         permitir_llm=not config.modo_connector,
         # Em nenhum modo o servidor escreve na base: quem grava e a CLI.
         gravar_cache=False,
@@ -145,11 +149,11 @@ def _seguranca_de_transporte(config: Any) -> Any:
     """Regras de Host/Origin quando o servidor atende por um nome publico.
 
     O SDK so liga a protecao contra DNS rebinding sozinho quando o bind e
-    loopback, e ai aceita apenas Host de loopback. Atrás de um tunel ou proxy o
-    Host que chega e o nome publico, e a requisição legitima levaria 421. Em vez
+    loopback, e ai aceita apenas Host de loopback. Atras de um tunel ou proxy o
+    Host que chega e o nome publico, e a requisicao legitima levaria 421. Em vez
     de desligar a checagem, declaramos os nomes por onde o servidor responde.
 
-    Devolve None quando não ha nome publico configurado, deixando o padrao do
+    Devolve None quando nao ha nome publico configurado, deixando o padrao do
     SDK valer.
     """
     if not config.http_hosts_publicos:
@@ -160,16 +164,16 @@ def _seguranca_de_transporte(config: Any) -> Any:
     hosts: list[str] = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
     origens: list[str] = ["http://127.0.0.1:*", "http://localhost:*"]
     for nome in config.http_hosts_publicos:
-        # Com e sem porta: atrás de TLS o Host costuma vir sem o ":443".
+        # Com e sem porta: atras de TLS o Host costuma vir sem o ":443".
         hosts += [nome, f"{nome}:*"]
         origens += [f"https://{nome}", f"https://{nome}:*"]
     return TransportSecuritySettings(allowed_hosts=hosts, allowed_origins=origens)
 
 
 def _com_limite(app: Any, limite_por_minuto: int, limite_global: int) -> Any:
-    """Embrulha o app ASGI com o teto de requisições por origem.
+    """Embrulha o app ASGI com o teto de requisicoes por origem.
 
-    O `run()` do SDK não aceita middleware, então o app e construido por
+    O `run()` do SDK nao aceita middleware, entao o app e construido por
     `streamable_http_app()`, embrulhado aqui e servido por uvicorn.
     """
     limitador = LimitadorPorOrigem(limite_por_minuto, limite_global)

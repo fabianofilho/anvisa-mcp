@@ -13,6 +13,7 @@ from importlib.resources import files
 
 from jinja2 import Environment, Template, select_autoescape
 
+from anvisa_mcp.llm.jev_client import ClassificadorComFallback
 from anvisa_mcp.llm.qwen_client import ClassificationResult, QwenClient
 
 logger = logging.getLogger(__name__)
@@ -41,12 +42,21 @@ def renderizar_prompt(**variaveis: object) -> str:
 
 
 async def classificar_dispositivo(
-    cliente: QwenClient,
+    cliente: QwenClient | ClassificadorComFallback,
     *,
     nome: str,
     descricao: str,
 ) -> ClassificationResult:
-    """Classifica um dispositivo. Levanta ``QwenIndisponivel`` se o LLM falhar."""
+    """Classifica um dispositivo. Levanta ``QwenIndisponivel`` se o classificador falhar.
+
+    Com ``QwenClient`` o caminho é o de sempre: prompt de produção e JSON. Com
+    ``ClassificadorComFallback`` quem decide é o Jev, e o prompt do Qwen só é usado
+    se a nuvem falhar naquele registro.
+    """
+    if isinstance(cliente, ClassificadorComFallback):
+        return await cliente.classificar(
+            nome=nome, descricao=descricao, prompt_qwen=renderizar_prompt()
+        )
     texto = f"Nome do produto: {nome}\n\nDocumentação:\n{descricao}".strip()
     resultado = await cliente.classify(texto, renderizar_prompt())
     logger.debug(
