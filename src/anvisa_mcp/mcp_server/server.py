@@ -37,12 +37,12 @@ logger = logging.getLogger(__name__)
 # com escudo do registro sanitário no visor. Em data URI, e não URL: o cliente precisa ver o
 # ícone antes de autenticar, e o endereço do Funnel é um só para todos os servidores.
 ICONE = [
-    Icon(
-        src="data:image/svg+xml;base64,"
-        + base64.b64encode((Path(__file__).parent / "icone.svg").read_bytes()).decode(),
-        mimeType="image/svg+xml",
-        sizes=["any"],
-    )
+Icon(
+    src="data:image/svg+xml;base64,"
+    + base64.b64encode((Path(__file__).parent / "icone.svg").read_bytes()).decode(),
+    mimeType="image/svg+xml",
+    sizes=["any"],
+)
 ]
 
 mcp = MCPServer("anvisa-mcp", version="0.1.0", icons=ICONE)
