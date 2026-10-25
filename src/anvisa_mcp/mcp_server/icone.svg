@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <title>anvisa-mcp: escudo do registro sanitário</title>
+  <defs>
+    <linearGradient id="verde" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6ee7b7"/>
+      <stop offset="1" stop-color="#059669"/>
+    </linearGradient>
+  </defs>
+  <!-- antena com bolinha -->
+  <rect x="245" y="40" width="22" height="70" rx="11" fill="url(#verde)"/>
+  <circle cx="256" cy="40" r="30" fill="url(#verde)"/>
+  <!-- orelhas -->
+  <rect x="20" y="214" width="44" height="124" rx="22" fill="url(#verde)"/>
+  <rect x="448" y="214" width="44" height="124" rx="22" fill="url(#verde)"/>
+  <!-- cabeça -->
+  <rect x="60" y="100" width="392" height="352" rx="84" fill="url(#verde)"/>
+  <!-- visor -->
+  <rect x="100" y="156" width="312" height="240" rx="52" fill="#0d1b16"/>
+  <!-- símbolo do tema: escudo do registro sanitário -->
+  <g fill="none" stroke="#6ee7b7" stroke-width="22" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M256 180 L336 208 V270 C336 318 300 352 256 372 C212 352 176 318 176 270 V208 Z"/>
+    <path d="M226 278 L248 300 L290 254"/>
+  </g>
+</svg>
