@@ -245,4 +245,9 @@ def main() -> None:
         config.http_limite_global_por_minuto,
         config.duckdb_path,
     )
-    uvicorn.run(app, host=config.http_host, port=config.http_porta, log_level="warning")
+    # Parada: sem este prazo o uvicorn espera as conexões SSE do claude.ai fecharem e o
+    # serviço só saía no SIGKILL do systemd (90 s padrão, 15 s desde 25/10/2026).
+    # Cinco segundos bastam para terminar a requisição em curso.
+    uvicorn.run(app, host=config.http_host, port=config.http_porta, log_level="warning",
+        timeout_graceful_shutdown=5,
+    )
