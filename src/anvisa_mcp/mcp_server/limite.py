@@ -22,6 +22,7 @@ cliente em laço.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import time
 from collections import deque
@@ -121,3 +122,19 @@ def origem_da_requisicao(scope: dict[str, Any]) -> str:
 
 
 _LOOPBACK = {"127.0.0.1", "::1"}
+
+
+def zerar_ultimo_octeto(ip: str) -> str:
+    """Origem para o log, sem identificar a pessoa.
+
+    IPv4 perde o último octeto (a.b.c.0); IPv6 fica só com os três primeiros
+    grupos. Qualquer outra coisa (como "desconhecido") passa como está.
+    """
+    try:
+        endereco = ipaddress.ip_address(ip)
+    except ValueError:
+        return ip
+    if isinstance(endereco, ipaddress.IPv4Address):
+        return str(ipaddress.ip_network(f"{ip}/24", strict=False).network_address)
+    grupos = endereco.exploded.split(":")[:3]
+    return ":".join(g.lstrip("0") or "0" for g in grupos) + "::"
